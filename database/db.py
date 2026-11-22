@@ -39,10 +39,10 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS subscriptions (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id         INTEGER NOT NULL,
-            type            TEXT NOT NULL,
+            type            TEXT NOT NULL,   -- 'trial' | 'paid'
             started_at      REAL NOT NULL,
             expires_at      REAL NOT NULL,
-            payment_id      TEXT,
+            payment_id      TEXT,            -- charge_id от Telegram
             stars_amount    INTEGER,
             is_active       INTEGER DEFAULT 1,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -52,8 +52,8 @@ def init_db() -> None:
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             created_at  REAL NOT NULL,
             ticker      TEXT NOT NULL,
-            exchange    TEXT NOT NULL,
-            alert_type  TEXT NOT NULL,
+            exchange    TEXT NOT NULL,       -- 'MOEX' | 'SPBEX'
+            alert_type  TEXT NOT NULL,       -- 'volume_spike' | 'price_move' | 'volatility'
             details     TEXT
         );
 
@@ -69,6 +69,15 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id);
         CREATE INDEX IF NOT EXISTS idx_sub_active ON subscriptions(is_active, expires_at);
 
+        CREATE TABLE IF NOT EXISTS favorites (
+            user_id     INTEGER NOT NULL,
+            ticker      TEXT NOT NULL,
+            exchange    TEXT NOT NULL DEFAULT 'MOEX',
+            added_at    REAL NOT NULL,
+            PRIMARY KEY (user_id, ticker, exchange),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+
         CREATE TABLE IF NOT EXISTS settings (
             key     TEXT PRIMARY KEY,
             value   TEXT NOT NULL
@@ -79,7 +88,9 @@ def init_db() -> None:
         """)
 
 
-def upsert_user(user_id, username, first_name) -> None:
+# ─── Пользователи ────────────────────────────────────────────────────────────
+
+def upsert_user(user_id: int, username: str | None, first_name: str | None) -> None:
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO users (user_id, username, first_name, joined_at)
@@ -90,7 +101,9 @@ def upsert_user(user_id, username, first_name) -> None:
         """, (user_id, username, first_name, datetime.now(timezone.utc).timestamp()))
 
 
-def has_active_subscription(user_id) -> bool:
+# ─── Подписки ─────────────────────────────────────────────────────────────────
+
+def has_active_subscription(user_id: int) -> bool:
     now = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         row = conn.execute("""
@@ -101,7 +114,7 @@ def has_active_subscription(user_id) -> bool:
     return row is not None
 
 
-def get_subscription_info(user_id):
+def get_subscription_info(user_id: int) -> dict | None:
     now = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         row = conn.execute("""
@@ -118,7 +131,7 @@ def get_subscription_info(user_id):
     return None
 
 
-def had_trial(user_id) -> bool:
+def had_trial(user_id: int) -> bool:
     with get_conn() as conn:
         row = conn.execute(
             "SELECT 1 FROM subscriptions WHERE user_id=? AND type='trial' LIMIT 1",
@@ -127,7 +140,7 @@ def had_trial(user_id) -> bool:
     return row is not None
 
 
-def activate_trial(user_id) -> None:
+def activate_trial(user_id: int) -> None:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=TRIAL_PERIOD_HOURS)
     with get_conn() as conn:
@@ -137,7 +150,7 @@ def activate_trial(user_id) -> None:
         """, (user_id, now.timestamp(), expires.timestamp()))
 
 
-def activate_paid(user_id, payment_id, stars) -> None:
+def activate_paid(user_id: int, payment_id: str, stars: int) -> None:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(days=SUBSCRIPTION_PERIOD_DAYS)
     with get_conn() as conn:
@@ -148,7 +161,8 @@ def activate_paid(user_id, payment_id, stars) -> None:
         """, (user_id, now.timestamp(), expires.timestamp(), payment_id, stars))
 
 
-def deactivate_subscription(payment_id) -> None:
+def deactivate_subscription(payment_id: str) -> None:
+    """Вызывается при возврате Stars."""
     with get_conn() as conn:
         conn.execute(
             "UPDATE subscriptions SET is_active=0 WHERE payment_id=?",
@@ -156,7 +170,7 @@ def deactivate_subscription(payment_id) -> None:
         )
 
 
-def get_all_active_user_ids() -> list:
+def get_all_active_user_ids() -> list[int]:
     now = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         rows = conn.execute("""
@@ -166,7 +180,9 @@ def get_all_active_user_ids() -> list:
     return [r["user_id"] for r in rows]
 
 
-def add_user_ticker(user_id, ticker, exchange) -> bool:
+# ─── Персональные тикеры ──────────────────────────────────────────────────────
+
+def add_user_ticker(user_id: int, ticker: str, exchange: str) -> bool:
     try:
         with get_conn() as conn:
             conn.execute("""
@@ -179,7 +195,7 @@ def add_user_ticker(user_id, ticker, exchange) -> bool:
         return False
 
 
-def remove_user_ticker(user_id, ticker, exchange) -> None:
+def remove_user_ticker(user_id: int, ticker: str, exchange: str) -> None:
     with get_conn() as conn:
         conn.execute(
             "DELETE FROM user_tickers WHERE user_id=? AND ticker=? AND exchange=?",
@@ -187,7 +203,7 @@ def remove_user_ticker(user_id, ticker, exchange) -> None:
         )
 
 
-def get_user_tickers(user_id) -> list:
+def get_user_tickers(user_id: int) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT ticker, exchange FROM user_tickers WHERE user_id=? ORDER BY ticker",
@@ -196,21 +212,72 @@ def get_user_tickers(user_id) -> list:
     return [{"ticker": r["ticker"], "exchange": r["exchange"]} for r in rows]
 
 
-def log_alert(ticker, exchange, alert_type, details) -> None:
+# ─── Избранные акции ─────────────────────────────────────────────────────────
+
+def add_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> bool:
+    """Добавить акцию в избранное."""
+    try:
+        with get_conn() as conn:
+            conn.execute("""
+                INSERT OR IGNORE INTO favorites (user_id, ticker, exchange, added_at)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, ticker.upper(), exchange.upper(),
+                  datetime.now(timezone.utc).timestamp()))
+        return True
+    except Exception:
+        return False
+
+
+def remove_favorite(user_id: int, ticker: str, exchange: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM favorites WHERE user_id=? AND ticker=? AND exchange=?",
+            (user_id, ticker.upper(), exchange.upper())
+        )
+
+
+def get_favorites(user_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT ticker, exchange FROM favorites WHERE user_id=? ORDER BY ticker",
+            (user_id,)
+        ).fetchall()
+    return [{"ticker": r["ticker"], "exchange": r["exchange"]} for r in rows]
+
+
+def get_users_watching_ticker(ticker: str, exchange: str) -> list[int]:
+    """Вернуть user_id всех, у кого тикер в избранном (только с активной подпиской)."""
+    now = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT DISTINCT f.user_id FROM favorites f
+            JOIN subscriptions s ON s.user_id = f.user_id
+            WHERE f.ticker=? AND f.exchange=?
+              AND s.is_active=1 AND s.expires_at>?
+        """, (ticker.upper(), exchange.upper(), now)).fetchall()
+    return [r["user_id"] for r in rows]
+
+
+# ─── Лог алертов ──────────────────────────────────────────────────────────────
+
+def log_alert(ticker: str, exchange: str, alert_type: str, details: str) -> None:
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO alerts_log (created_at, ticker, exchange, alert_type, details)
             VALUES (?, ?, ?, ?, ?)
-        """, (datetime.now(timezone.utc).timestamp(), ticker, exchange, alert_type, details))
+        """, (datetime.now(timezone.utc).timestamp(), ticker, exchange,
+              alert_type, details))
 
 
-def get_setting(key, default="") -> str:
+# ─── Настройки ───────────────────────────────────────────────────────────────
+
+def get_setting(key: str, default: str = "") -> str:
     with get_conn() as conn:
         row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     return row["value"] if row else default
 
 
-def set_setting(key, value) -> None:
+def set_setting(key: str, value: str) -> None:
     with get_conn() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
@@ -222,15 +289,18 @@ def get_subscription_price() -> int:
     return int(get_setting("subscription_price_stars", "250"))
 
 
-def set_subscription_price(stars) -> None:
+def set_subscription_price(stars: int) -> None:
     set_setting("subscription_price_stars", str(stars))
 
 
-def grant_trial(user_id, hours=24) -> None:
-    """\u0412\u044b\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0431\u043d\u044b\u0439 \u043f\u0435\u0440\u0438\u043e\u0434 \u0432\u0440\u0443\u0447\u043d\u0443\u044e (\u0434\u0430\u0436\u0435 \u0435\u0441\u043b\u0438 \u0443\u0436\u0435 \u0431\u044b\u043b \u0442\u0440\u0438\u0430\u043b)."""
+# ─── Ручная выдача пробного периода ──────────────────────────────────────────
+
+def grant_trial(user_id: int, hours: int = 24) -> None:
+    """Выдать пробный период вручную (даже если уже был trial)."""
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=hours)
     with get_conn() as conn:
+        # Деактивируем старый trial если есть
         conn.execute(
             "UPDATE subscriptions SET is_active=0 WHERE user_id=? AND type='trial'",
             (user_id,)
@@ -241,7 +311,8 @@ def grant_trial(user_id, hours=24) -> None:
         """, (user_id, now.timestamp(), expires.timestamp()))
 
 
-def get_all_users() -> list:
+def get_all_users() -> list[dict]:
+    """Список всех пользователей для admin панели."""
     with get_conn() as conn:
         rows = conn.execute("""
             SELECT u.user_id, u.username, u.first_name,
@@ -263,6 +334,8 @@ def get_all_users() -> list:
         })
     return result
 
+
+# ─── Статистика (для админа) ──────────────────────────────────────────────────
 
 def get_stats() -> dict:
     now = datetime.now(timezone.utc).timestamp()
