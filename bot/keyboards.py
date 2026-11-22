@@ -18,13 +18,24 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 
 
 def buy_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text=f"💳 Оплатить {SUBSCRIPTION_PRICE_STARS} ⭐ Stars / месяц",
-            callback_data="pay_stars",
-        )],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
-    ])
+    try:
+        from bot.payments_yukassa import YUKASSA_AVAILABLE
+        show_yukassa = YUKASSA_AVAILABLE
+    except ImportError:
+        show_yukassa = False
+
+    buttons = []
+    if show_yukassa:
+        buttons.append([InlineKeyboardButton(
+            text="💳 Оплатить картой / СБП (ЮKassa)",
+            callback_data="pay_yukassa",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text=f"⭐ Оплатить {SUBSCRIPTION_PRICE_STARS} Stars / месяц",
+        callback_data="pay_stars",
+    )])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def back_kb(cb: str = "main_menu") -> InlineKeyboardMarkup:
