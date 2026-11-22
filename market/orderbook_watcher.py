@@ -95,195 +95,235 @@ class IcebergAlert:
             f"💡 Крупный участник скрывает реальный объём"
         )
 
-
-# ─── Вспомогательные функции ─────────────────────────────────────────────────
-
-def _safe_float(val, default: float = 0.0) -> float:
-    try:
-        return float(val) if val is not None else default
-    except (TypeError, ValueError):
-        return default
+"
 
 
-def _mid_price(bids: list[dict], asks: list[dict]) -> float:
-    """Mid-price из лучшего бид и аск."""
-    best_bid = _safe_float(bids[0].get("PRICE")) if bids else 0.0
-    best_ask = _safe_float(asks[0].get("PRICE")) if asks else 0.0
-    if best_bid and best_ask:
-        return (best_bid + best_ask) / 2
-    return best_bid or best_ask
-
-
-def _filter_dead_orders(
-    orders: list[dict],
-    mid: float,
-    spread_pct: float = DEAD_ORDER_SPREAD_PCT,
-) -> list[dict]:
-    """
-    Удаляет «мёртвые» заявки, стоящие далеко от рыночной цены.
-    Шаг Pre-Filter (freshness/proximity) для стакана.
-    """
-    if mid == 0:
-        return orders
-    threshold = mid * spread_pct / 100
-    return [o for o in orders if abs(_safe_float(o.get("PRICE")) - mid) <= threshold]
-
-
-def _compute_median_order_value(orders: list[dict], price_fallback: float) -> float:
-    """
-    Медиана стоимости заявок в рублях (Шаг 2: робастная статистика).
-    """
-    values = []
-    for o in orders:
-        price = _safe_float(o.get("PRICE")) or price_fallback
-        qty = _safe_float(o.get("QUANTITY"))
-        if price > 0 and qty > 0:
-            values.append(price * qty)
-    if not values:
-        return 0.0
-    return statistics.median(values)
-
-
-# ─── Трекер айсберг-паттернов ────────────────────────────────────────────────
+# ─── Внутренние типы ───────────────────────────────────────────────────────────
 
 @dataclass
-class _IcebergLevel:
-    """Состояние отслеживания одного ценового уровня на предмет айсберга."""
+class _OrderEntry:
+    """Один уровень стакана."""
     price: float
+    quantity: int   # лотов
+
+    @property
+    def value_rub(self) -> float:
+        return self.price * self.quantity
+
+
+@dataclass
+class _IcebergState:
+    """Состояние отслеживаемого уровня."""
     side: str
-    last_qty: int = 0
-    k_count: int = 0
-    total_executed: int = 0
-    last_seen_ts: float = field(default_factory=time.monotonic)
+    price: float
+    visible_qty: int           # количество в последнем снимке
+    total_executed: int = 0    # суммарный исполненный объём
+    k_count: int = 0           # число циклов исполнение→пополнение
 
-    def update(self, current_qty: int) -> bool:
-        """
-        Обновляет счётчик. Возвращает True, если цикл подтверждён
-        (объём уменьшился, потом восстановился — признак пополнения).
-        """
-        self.last_seen_ts = time.monotonic()
-        if self.last_qty == 0:
-            self.last_qty = current_qty
-            return False
 
-        delta = current_qty - self.last_qty
-        if delta < 0:
-            # Объём уменьшился — исполняется
-            self.total_executed += abs(delta)
-        elif delta > 0 and self.total_executed > 0:
-            # Объём восстановился после исполнения — пополнение!
-            self.k_count += 1
-            self.total_executed = 0  # сбрасываем для следующего цикла
-            self.last_qty = current_qty
-            return True
+AlertCallback = Callable[
+    [LargeOrderAlert | IcebergAlert],
+    Coroutine[None, None, None],
+]
 
-        self.last_qty = current_qty
+
+# ─── Помощные функции ──────────────────────────────────────────────────────────────
+
+
+def _parse_orderbook(raw: dict) -> tuple[list[_OrderEntry], list[_OrderEntry]]:
+    """Парсим MOEX ISS ответ стакана.
+
+    Returns:
+        (bids, asks) — отсортированы по цене (покупки — по убыванию, продажи — по возрастанию)
+    """
+    try:
+        ob_data = raw["orderbook"]
+        columns = ob_data["columns"]
+        rows = ob_data["data"]
+    except (KeyError, TypeError):
+        return [], []
+
+    buysell_idx = columns.index("BUYSELL")
+    price_idx = columns.index("PRICE")
+    qty_idx = columns.index("QUANTITY")
+
+    bids: list[_OrderEntry] = []
+    asks: list[_OrderEntry] = []
+
+    for row in rows:
+        try:
+            side = row[buysell_idx]
+            price = float(row[price_idx])
+            qty = int(row[qty_idx])
+        except (TypeError, ValueError, IndexError):
+            continue
+        entry = _OrderEntry(price=price, quantity=qty)
+        if side == "B":
+            bids.append(entry)
+        elif side == "S":
+            asks.append(entry)
+
+    bids.sort(key=lambda e: e.price, reverse=True)
+    asks.sort(key=lambda e: e.price)
+    return bids, asks
+
+
+def _median_value(entries: list[_OrderEntry]) -> float:
+    """Median order value in RUB across both sides."""
+    vals = [e.value_rub for e in entries if e.quantity > 0]
+    if not vals:
+        return 0.0
+    return statistics.median(vals)
+
+
+def _is_dead_order(price: float, best_bid: float, best_ask: float) -> bool:
+    """True if the order is far from NBBO (probably never going to execute)."""
+    if best_bid <= 0 or best_ask <= 0:
         return False
-
-    def is_stale(self, ttl_seconds: float = 120.0) -> bool:
-        return time.monotonic() - self.last_seen_ts > ttl_seconds
-
-
-class IcebergTracker:
-    """
-    Отслеживает айсберг-паттерны по всем уровням стакана.
-    Шаг 3 по архитектуре: Iceberg detection.
-    """
-    def __init__(self, k_threshold: int = ICEBERG_K_THRESHOLD):
-        self._k_threshold = k_threshold
-        # (ticker, side, price) → _IcebergLevel
-        self._levels: dict[tuple, _IcebergLevel] = {}
-
-    def update(
-        self,
-        ticker: str,
-        bids: list[dict],
-        asks: list[dict],
-    ) -> list[tuple[str, float, int, int]]:
-        """
-        Обновляет трекер; возвращает список (side, price, k_count, total_lots)
-        для уровней, достигших порога K.
-        """
-        triggered: list[tuple[str, float, int, int]] = []
-        self._cleanup_stale(ticker)
-
-        for side, orders in (("bid", bids), ("ask", asks)):
-            for o in orders:
-                price = _safe_float(o.get("PRICE"))
-                qty = int(_safe_float(o.get("QUANTITY")))
-                if price <= 0 or qty <= 0:
-                    continue
-                key = (ticker, side, round(price, 4))
-                if key not in self._levels:
-                    self._levels[key] = _IcebergLevel(price=price, side=side, last_qty=qty)
-                else:
-                    level = self._levels[key]
-                    if level.update(qty) and level.k_count >= self._k_threshold:
-                        triggered.append((side, price, level.k_count, level.total_executed))
-                        # Сбрасываем счётчик, чтобы не спамить
-                        level.k_count = 0
-
-        return triggered
-
-    def _cleanup_stale(self, ticker: str) -> None:
-        stale = [k for k, v in self._levels.items() if k[0] == ticker and v.is_stale()]
-        for k in stale:
-            del self._levels[k]
+    mid = (best_bid + best_ask) / 2
+    return abs(price - mid) / mid * 100 > DEAD_ORDER_SPREAD_PCT
 
 
-# ─── OrderbookWatcher ────────────────────────────────────────────────────────
+# ─── Основной класс ──────────────────────────────────────────────────────────────────
+
 
 class OrderbookWatcher:
-    """
-    Асинхронный монитор стакана.
-    Детектирует крупные заявки и айсберг-паттерны.
+    """Watching Level-2 for a list of MOEX tickers.
+
+    Args:
+        tickers:        List of (ticker, short_name) pairs.
+        alert_callback: Async callable that receives LargeOrderAlert or IcebergAlert.
+        poll_interval:  Seconds between ISS requests per ticker.
     """
 
     def __init__(
         self,
-        tickers: list[tuple[str, str]],   # [(ticker, short_name), ...]
-        alert_callback: Callable[..., Coroutine],
-        large_multiplier: float = LARGE_ORDER_RELATIVE_MULTIPLIER,
-        min_order_value_rub: float = MIN_ORDER_VALUE_RUB,
-        dead_spread_pct: float = DEAD_ORDER_SPREAD_PCT,
+        tickers: list[tuple[str, str]],
+        alert_callback: AlertCallback,
         poll_interval: float = POLL_INTERVAL_SECONDS,
-        cooldown_seconds: float = ALERT_COOLDOWN_SECONDS,
-    ):
-        self._tickers = tickers
-        self._callback = alert_callback
-        self._large_multiplier = large_multiplier
-        self._min_order_value = min_order_value_rub
-        self._dead_spread_pct = dead_spread_pct
-        self._poll_interval = poll_interval
-        self._cooldown = cooldown_seconds
+    ) -> None:
+        self.tickers = tickers
+        self.alert_callback = alert_callback
+        self.poll_interval = poll_interval
 
-        self._iceberg_tracker = IcebergTracker()
-        self._last_alert: dict[str, float] = {}   # ticker → monotonic ts
+        # Состояние айсбергов: ticker -> price_key -> _IcebergState
+        self._iceberg: dict[str, dict[str, _IcebergState]] = {}
 
-    def _is_cooled(self, ticker: str) -> bool:
-        last = self._last_alert.get(ticker, 0.0)
-        return time.monotonic() - last >= self._cooldown
+        # Кулдаун: ticker -> last_alert_time
+        self._last_alert: dict[str, float] = {}
 
-    def _mark_alerted(self, ticker: str) -> None:
-        self._last_alert[ticker] = time.monotonic()
+        self._session: Optional[aiohttp.ClientSession] = None
+        self._last_check_utc: Optional[datetime] = None
+
+        self._running: bool = False
+        self._task: asyncio.Task | None = None
 
     async def _fetch_orderbook(self, session: aiohttp.ClientSession, ticker: str) -> dict:
         url = MOEX_ORDERBOOK_URL.format(ticker=ticker)
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            resp.raise_for_status()
             return await resp.json(content_type=None)
 
-    def _parse_orders(self, raw: dict) -> tuple[list[dict], list[dict]]:
-        """Возвращает (bids, asks) как списки словарей."""
-        try:
-            ob = raw.get("orderbook", {})
-            columns = ob.get("columns", [])
-            data = ob.get("data", [])
-            rows = [dict(zip(columns, row)) for row in data]
-            bids = [r for r in rows if r.get("BUYSELL") == "B"]
-            asks = [r for r in rows if r.get("BUYSELL") == "S"]
-            return bids, asks
-        except Exception:
-            return [], []
+    def _check_large_orders(
+        self,
+        ticker: str,
+        short_name: str,
+        bids: list[_OrderEntry],
+        asks: list[_OrderEntry],
+    ) -> list[LargeOrderAlert]:
+        alerts: list[LargeOrderAlert] = []
+        all_entries = bids + asks
+        if not all_entries:
+            return alerts
+
+        median_val = _median_value(all_entries)
+        best_bid = bids[0].price if bids else 0.0
+        best_ask = asks[0].price if asks else 0.0
+
+        for side, entries in (("bid", bids), ("ask", asks)):
+            for entry in entries:
+                if _is_dead_order(entry.price, best_bid, best_ask):
+                    continue
+                if entry.value_rub < MIN_ORDER_VALUE_RUB:
+                    continue
+                if median_val > 0 and entry.value_rub < median_val * LARGE_ORDER_RELATIVE_MULTIPLIER:
+                    continue
+                rel = entry.value_rub / median_val if median_val > 0 else 0.0
+                alerts.append(LargeOrderAlert(
+                    ticker=ticker,
+                    short_name=short_name,
+                    side=side,
+                    price=entry.price,
+                    quantity=entry.quantity,
+                    value_rub=entry.value_rub,
+                    median_order_value=median_val,
+                    relative_size=rel,
+                ))
+        return alerts
+
+    def _update_iceberg(
+        self,
+        ticker: str,
+        short_name: str,
+        bids: list[_OrderEntry],
+        asks: list[_OrderEntry],
+    ) -> list[IcebergAlert]:
+        alerts: list[IcebergAlert] = []
+        ticker_state = self._iceberg.setdefault(ticker, {})
+
+        for side, entries in (("bid", bids), ("ask", asks)):
+            current_prices = {e.price for e in entries}
+
+            # Очистить устаревшие уровни
+            stale = [
+                k for k, s in ticker_state.items()
+                if s.side == side and s.price not in current_prices
+            ]
+            for k in stale:
+                del ticker_state[k]
+
+            for entry in entries:
+                key = f"{side}_{entry.price}"
+                state = ticker_state.get(key)
+
+                if state is None:
+                    ticker_state[key] = _IcebergState(
+                        side=side,
+                        price=entry.price,
+                        visible_qty=entry.quantity,
+                    )
+                    continue
+
+                prev_qty = state.visible_qty
+                curr_qty = entry.quantity
+
+                # Цикл: количество упало (исполнение) и затем поднялось (пополнение)
+                if prev_qty > curr_qty and curr_qty > prev_qty * 0.5:
+                    # Простое уменьшение — не айсберг
+                    state.visible_qty = curr_qty
+                    continue
+                if curr_qty > prev_qty and prev_qty < curr_qty * 0.9:
+                    executed = curr_qty - prev_qty  # оценка
+                    state.total_executed += abs(executed)
+                    state.k_count += 1
+                    state.visible_qty = curr_qty
+
+                    if state.k_count >= ICEBERG_K_THRESHOLD:
+                        alerts.append(IcebergAlert(
+                            ticker=ticker,
+                            short_name=short_name,
+                            side=side,
+                            price=entry.price,
+                            k_count=state.k_count,
+                            total_executed_lots=state.total_executed,
+                        ))
+                        # Сброс счётчика после срабатывания
+                        state.k_count = 0
+                        state.total_executed = 0
+                else:
+                    state.visible_qty = curr_qty
+
+        return alerts
 
     async def _process_ticker(
         self,
@@ -296,71 +336,50 @@ class OrderbookWatcher:
         except Exception:
             return
 
-        bids, asks = self._parse_orders(raw)
+        bids, asks = _parse_orderbook(raw)
         if not bids and not asks:
             return
 
-        mid = _mid_price(bids, asks)
+        now = time.monotonic()
+        last = self._last_alert.get(ticker, 0.0)
+        in_cooldown = (now - last) < ALERT_COOLDOWN_SECONDS
 
-        # Шаг Pre-Filter: убираем заявки далеко от рынка
-        bids = _filter_dead_orders(bids, mid, self._dead_spread_pct)
-        asks = _filter_dead_orders(asks, mid, self._dead_spread_pct)
+        candidates: list[LargeOrderOrderAlert | IcebergAlert] = []
+        candidates += self._check_large_orders(ticker, short_name, bids, asks)
+        candidates += self._update_iceberg(ticker, short_name, bids, asks)
 
-        all_orders = bids + asks
-
-        # Робастная медиана стоимости заявок
-        median_val = _compute_median_order_value(all_orders, mid)
-
-        # ── Детектор крупных заявок ──
-        if self._is_cooled(ticker):
-            for side, orders in (("bid", bids), ("ask", asks)):
-                for o in orders:
-                    price = _safe_float(o.get("PRICE"))
-                    qty = int(_safe_float(o.get("QUANTITY")))
-                    if price <= 0 or qty <= 0:
-                        continue
-                    value = price * qty
-                    relative = (value / median_val) if median_val > 0 else 0
-
-                    if value >= self._min_order_value and relative >= self._large_multiplier:
-                        alert = LargeOrderAlert(
-                            ticker=ticker,
-                            short_name=short_name,
-                            side=side,
-                            price=price,
-                            quantity=qty,
-                            value_rub=value,
-                            median_order_value=median_val,
-                            relative_size=relative,
-                        )
-                        self._mark_alerted(ticker)
-                        await self._callback(alert)
-                        break  # один алерт за цикл по инструменту
-                else:
-                    continue
-                break
-
-        # ── Детектор айсберга ──
-        triggered = self._iceberg_tracker.update(ticker, bids, asks)
-        for side, price, k_count, total_lots in triggered:
-            if self._is_cooled(ticker):
-                iceberg = IcebergAlert(
-                    ticker=ticker,
-                    short_name=short_name,
-                    side=side,
-                    price=price,
-                    k_count=k_count,
-                    total_executed_lots=total_lots,
-                )
-                self._mark_alerted(ticker)
-                await self._callback(iceberg)
+        if candidates and not in_cooldown:
+            self._last_alert[ticker] = now
+            for alert in candidates:
+                try:
+                    await self.alert_callback(alert)
+                except Exception:
+                    pass
 
     async def run(self) -> None:
+        """Main polling loop. Запускается через start()."""
         async with aiohttp.ClientSession() as session:
-            while True:
+            self._session = session
+            while self._running:
                 tasks = [
-                    self._process_ticker(session, ticker, name)
-                    for ticker, name in self._tickers
+                    self._process_ticker(session, ticker, short_name)
+                    for ticker, short_name in self.tickers
                 ]
                 await asyncio.gather(*tasks, return_exceptions=True)
-                await asyncio.sleep(self._poll_interval)
+                self._last_check_utc = datetime.utcnow()
+                await asyncio.sleep(self.poll_interval)
+
+    async def start(self) -> None:
+        """Запускает watcher как фоновую задачу asyncio."""
+        self._running = True
+        self._task = asyncio.create_task(self.run())
+
+    async def stop(self) -> None:
+        """Останавливает watcher."""
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
