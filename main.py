@@ -181,16 +181,14 @@ async def main() -> None:
         from market.orderbook_watcher import OrderbookWatcher
         from market.moex import get_all_moex_tickers
 
-        tickers_raw = await asyncio.get_event_loop().run_in_executor(None, get_all_moex_tickers)
-        ob_tickers = [
-            {"ticker": t.get("ticker", ""), "exchange": "MOEX", "board": t.get("board", "TQBR")}
-            for t in tickers_raw[:100]  # ограничиваем нагрузку
-        ]
+        # get_all_moex_tickers — async, возвращает list[str]
+        ticker_strs = await get_all_moex_tickers("TQBR")
+        # OrderbookWatcher принимает list[tuple[str, str]]: (ticker, short_name)
+        ob_tickers = [(t, t) for t in ticker_strs[:100]]
         if ob_tickers:
             orderbook_watcher = OrderbookWatcher(
                 tickers=ob_tickers,
                 alert_callback=send_orderbook,
-                interval_seconds=60,
             )
             await orderbook_watcher.start()
             logger.info("OrderbookWatcher запущен (%d тикеров)", len(ob_tickers))
@@ -201,10 +199,12 @@ async def main() -> None:
     corp_watcher = None
     try:
         from market.corp_reports_watcher import CorpReportsWatcher
+        from market.moex import get_all_moex_tickers as _get_tickers
+        _ticker_strs = await _get_tickers("TQBR")
+        corp_tickers = [(_t, _t) for _t in _ticker_strs]
         corp_watcher = CorpReportsWatcher(
+            tickers=corp_tickers,
             alert_callback=send_corp_reports,
-            interval_seconds=120,
-            priority_only=False,
         )
         await corp_watcher.start()
         logger.info("CorpReportsWatcher запущен")
