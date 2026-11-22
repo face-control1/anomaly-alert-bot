@@ -1,11 +1,10 @@
 services:
   - type: web
-    name: anomaly-alert-bot
+    name: anomaly-moex-bot
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
-    healthCheckPath: /
     envVars:
       - key: BOT_TOKEN
         sync: false
@@ -19,3 +18,9 @@ services:
         value: "data/bot.db"
       - key: LOG_FILE
         value: "logs/bot.log"
+      - key: VOLUME_SPIKE_MULTIPLIER
+        value: "3.0"
+      - key: PRICE_CHANGE_THRESHOLD_PCT
+        value: "3.0"
+      - key: VOLATILITY_SIGMA
+        value: "2.5"
