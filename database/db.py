@@ -68,10 +68,18 @@ def init_db() -> None:
 
         CREATE INDEX IF NOT EXISTS idx_sub_user ON subscriptions(user_id);
         CREATE INDEX IF NOT EXISTS idx_sub_active ON subscriptions(is_active, expires_at);
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key     TEXT PRIMARY KEY,
+            value   TEXT NOT NULL
+        );
+
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('subscription_price_stars', '250');
+        INSERT OR IGNORE INTO settings (key, value) VALUES ('trial_hours', '24');
         """)
 
 
-def upsert_user(user_id: int, username: str | None, first_name: str | None) -> None:
+def upsert_user(user_id, username, first_name) -> None:
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO users (user_id, username, first_name, joined_at)
@@ -82,7 +90,7 @@ def upsert_user(user_id: int, username: str | None, first_name: str | None) -> N
         """, (user_id, username, first_name, datetime.now(timezone.utc).timestamp()))
 
 
-def has_active_subscription(user_id: int) -> bool:
+def has_active_subscription(user_id) -> bool:
     now = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         row = conn.execute("""
@@ -93,7 +101,7 @@ def has_active_subscription(user_id: int) -> bool:
     return row is not None
 
 
-def get_subscription_info(user_id: int) -> dict | None:
+def get_subscription_info(user_id):
     now = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         row = conn.execute("""
@@ -110,7 +118,7 @@ def get_subscription_info(user_id: int) -> dict | None:
     return None
 
 
-def had_trial(user_id: int) -> bool:
+def had_trial(user_id) -> bool:
     with get_conn() as conn:
         row = conn.execute(
             "SELECT 1 FROM subscriptions WHERE user_id=? AND type='trial' LIMIT 1",
@@ -119,7 +127,7 @@ def had_trial(user_id: int) -> bool:
     return row is not None
 
 
-def activate_trial(user_id: int) -> None:
+def activate_trial(user_id) -> None:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=TRIAL_PERIOD_HOURS)
     with get_conn() as conn:
@@ -129,7 +137,7 @@ def activate_trial(user_id: int) -> None:
         """, (user_id, now.timestamp(), expires.timestamp()))
 
 
-def activate_paid(user_id: int, payment_id: str, stars: int) -> None:
+def activate_paid(user_id, payment_id, stars) -> None:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(days=SUBSCRIPTION_PERIOD_DAYS)
     with get_conn() as conn:
@@ -140,7 +148,7 @@ def activate_paid(user_id: int, payment_id: str, stars: int) -> None:
         """, (user_id, now.timestamp(), expires.timestamp(), payment_id, stars))
 
 
-def deactivate_subscription(payment_id: str) -> None:
+def deactivate_subscription(payment_id) -> None:
     with get_conn() as conn:
         conn.execute(
             "UPDATE subscriptions SET is_active=0 WHERE payment_id=?",
@@ -148,7 +156,7 @@ def deactivate_subscription(payment_id: str) -> None:
         )
 
 
-def get_all_active_user_ids() -> list[int]:
+def get_all_active_user_ids() -> list:
     now = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         rows = conn.execute("""
@@ -158,7 +166,7 @@ def get_all_active_user_ids() -> list[int]:
     return [r["user_id"] for r in rows]
 
 
-def add_user_ticker(user_id: int, ticker: str, exchange: str) -> bool:
+def add_user_ticker(user_id, ticker, exchange) -> bool:
     try:
         with get_conn() as conn:
             conn.execute("""
@@ -171,7 +179,7 @@ def add_user_ticker(user_id: int, ticker: str, exchange: str) -> bool:
         return False
 
 
-def remove_user_ticker(user_id: int, ticker: str, exchange: str) -> None:
+def remove_user_ticker(user_id, ticker, exchange) -> None:
     with get_conn() as conn:
         conn.execute(
             "DELETE FROM user_tickers WHERE user_id=? AND ticker=? AND exchange=?",
@@ -179,7 +187,7 @@ def remove_user_ticker(user_id: int, ticker: str, exchange: str) -> None:
         )
 
 
-def get_user_tickers(user_id: int) -> list[dict]:
+def get_user_tickers(user_id) -> list:
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT ticker, exchange FROM user_tickers WHERE user_id=? ORDER BY ticker",
@@ -188,13 +196,72 @@ def get_user_tickers(user_id: int) -> list[dict]:
     return [{"ticker": r["ticker"], "exchange": r["exchange"]} for r in rows]
 
 
-def log_alert(ticker: str, exchange: str, alert_type: str, details: str) -> None:
+def log_alert(ticker, exchange, alert_type, details) -> None:
     with get_conn() as conn:
         conn.execute("""
             INSERT INTO alerts_log (created_at, ticker, exchange, alert_type, details)
             VALUES (?, ?, ?, ?, ?)
-        """, (datetime.now(timezone.utc).timestamp(), ticker, exchange,
-              alert_type, details))
+        """, (datetime.now(timezone.utc).timestamp(), ticker, exchange, alert_type, details))
+
+
+def get_setting(key, default="") -> str:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key, value) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+
+
+def get_subscription_price() -> int:
+    return int(get_setting("subscription_price_stars", "250"))
+
+
+def set_subscription_price(stars) -> None:
+    set_setting("subscription_price_stars", str(stars))
+
+
+def grant_trial(user_id, hours=24) -> None:
+    """\u0412\u044b\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0431\u043d\u044b\u0439 \u043f\u0435\u0440\u0438\u043e\u0434 \u0432\u0440\u0443\u0447\u043d\u0443\u044e (\u0434\u0430\u0436\u0435 \u0435\u0441\u043b\u0438 \u0443\u0436\u0435 \u0431\u044b\u043b \u0442\u0440\u0438\u0430\u043b)."""
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(hours=hours)
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET is_active=0 WHERE user_id=? AND type='trial'",
+            (user_id,)
+        )
+        conn.execute("""
+            INSERT INTO subscriptions (user_id, type, started_at, expires_at)
+            VALUES (?, 'trial', ?, ?)
+        """, (user_id, now.timestamp(), expires.timestamp()))
+
+
+def get_all_users() -> list:
+    with get_conn() as conn:
+        rows = conn.execute("""
+            SELECT u.user_id, u.username, u.first_name,
+                   s.type as sub_type, s.expires_at
+            FROM users u
+            LEFT JOIN subscriptions s ON s.user_id = u.user_id
+                AND s.is_active=1 AND s.expires_at > ?
+            ORDER BY u.joined_at DESC
+            LIMIT 100
+        """, (datetime.now(timezone.utc).timestamp(),)).fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "user_id": r["user_id"],
+            "username": r["username"],
+            "first_name": r["first_name"],
+            "sub_type": r["sub_type"],
+            "expires_at": datetime.fromtimestamp(r["expires_at"], tz=timezone.utc) if r["expires_at"] else None,
+        })
+    return result
 
 
 def get_stats() -> dict:
