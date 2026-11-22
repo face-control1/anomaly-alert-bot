@@ -764,7 +764,7 @@ async def cb_trial_yukassa(cb: CallbackQuery) -> None:
             "Пробный период уже был использован. Оформите платную подписку.",
             show_alert=True,
         )
-router.message(Command("subscribe"))
+@router.message(Command("subscribe"))
 async def cmd_subscribe(msg: Message) -> None:
     """Показывает меню подписки."""
     try:
