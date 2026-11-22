@@ -19,7 +19,7 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-# ─── MOEX ISS endpoint ──────────────────────────────────────────────────────
+# ─── MOEX ISS endpoint ──────────────────────────────────────────────────────────────
 
 CORP_REPORTS_URL = (
     "https://iss.moex.com/iss/sitenews.json"
@@ -34,7 +34,7 @@ ISSUER_EVENTS_URL = (
     "securities/{ticker}/events.json?limit=20&lang=ru"
 )
 
-# ─── Настройки ───────────────────────────────────────────────────────────────
+# ─── Настройки ───────────────────────────────────────────────────────────────────
 
 # Максимальный возраст отчёта (мин): события старше этого — игнорируем
 MAX_REPORT_AGE_MINUTES = 15
@@ -77,12 +77,12 @@ class CorpReportAlert:
             f"📰 <b>{self.event_type}</b>\n"
             f"{self.headline}\n"
             f"\n"
-            f"{self.description[:300]}{'…' if len(self.description) > 300 else ''}"
+            f"{self.description[:300]}{'\u2026' if len(self.description) > 300 else ''}"
             + (f"\n\n🔗 <a href='{self.source_url}'>Источник</a>" if self.source_url else "")
         )
 
 
-# ─── CorpReportsWatcher ──────────────────────────────────────────────────────
+# ─── CorpReportsWatcher ──────────────────────────────────────────────────────────────
 
 class CorpReportsWatcher:
     """
@@ -112,7 +112,10 @@ class CorpReportsWatcher:
         # Время последней успешной проверки (UTC) — основа для updated_after
         self._last_check_utc: Optional[datetime] = None
 
-    # ── Опрос MOEX ISS ──────────────────────────────────────────────────────
+        self._running: bool = False
+        self._task: asyncio.Task | None = None
+
+    # ── Опрос MOEX ISS ──────────────────────────────────────────────────────────────────
 
     async def _fetch_news(
         self,
@@ -134,7 +137,7 @@ class CorpReportsWatcher:
             logger.warning("corp_reports_watcher: fetch failed: %s", exc)
             return []
 
-    # ── Разбор и фильтрация ─────────────────────────────────────────────────
+    # ── Разбор и фильтрация ─────────────────────────────────────────────────────────
 
     def _parse_publish_time(self, item: dict) -> Optional[datetime]:
         """Парсит publish_time/published_at из записи ISS."""
@@ -187,7 +190,7 @@ class CorpReportsWatcher:
             return "Байбэк"
         return "Корпоративное событие"
 
-    # ── Основной цикл ───────────────────────────────────────────────────────
+    # ── Основной цикл ───────────────────────────────────────────────────────────────────
 
     async def _one_pass(self, session: aiohttp.ClientSession) -> None:
         now_utc = datetime.now(timezone.utc)
@@ -251,7 +254,7 @@ class CorpReportsWatcher:
             # Первый запуск: устанавливаем окно на max_report_age назад
             self._last_check_utc = datetime.now(timezone.utc) - self._max_age
 
-            while True:
+            while self._running:
                 try:
                     await self._one_pass(session)
                 except Exception as exc:
@@ -263,3 +266,18 @@ class CorpReportsWatcher:
                     self._priority_interval if has_priority else self._normal_interval
                 )
                 await asyncio.sleep(interval)
+
+    async def start(self) -> None:
+        """Запускает watcher как фоновую задачу asyncio."""
+        self._running = True
+        self._task = asyncio.create_task(self.run())
+
+    async def stop(self) -> None:
+        """Останавливает watcher."""
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
