@@ -1,60 +1,78 @@
 """
-Получение рыночных данных с Московской биржи через открытый MOEX ISS API.
-Документация: https://iss.moex.com/iss/reference/
+MOEX ISS API — получение рыночных данных.
 """
-import httpx
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import Optional
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
-BASE = "https://iss.moex.com/iss"
+BASE_URL = "https://iss.moex.com/iss"
+_client: Optional[httpx.AsyncClient] = None
+
+
+def get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=15.0)
+    return _client
 
 
 async def fetch_json(url: str, params: dict | None = None) -> dict | None:
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            return r.json()
-    except Exception as exc:
-        logger.warning("MOEX API error %s: %s", url, exc)
+        r = await get_client().get(url, params=params)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        logger.debug("fetch_json error %s: %s", url, e)
         return None
 
 
-async def get_moex_securities(board: str = "TQBR") -> list[dict]:
-    """Возвращает список инструментов с текущими котировками."""
-    url = f"{BASE}/engines/stock/markets/shares/boards/{board}/securities.json"
-    data = await fetch_json(url, {"iss.meta": "off", "iss.only": "securities,marketdata"})
+async def get_all_moex_tickers(board: str = "TQBR") -> list[str]:
+    """Fetches all actively traded tickers from MOEX TQBR board."""
+    url = f"{BASE_URL}/engines/stock/markets/shares/boards/{board}/securities.json"
+    data = await fetch_json(url, {"iss.meta": "off", "iss.only": "securities", "securities.columns": "SECID,STATUS,LOTSIZE"})
     if not data:
         return []
+    rows = data.get("securities", {}).get("data", [])
+    return [r[0] for r in rows if r[1] == "A" and r[2]]
 
-    sec_cols = data["securities"]["columns"]
-    sec_data = data["securities"]["data"]
-    md_cols = data["marketdata"]["columns"]
-    md_data = data["marketdata"]["data"]
 
-    securities: dict[str, dict] = {}
-    for row in sec_data:
-        d = dict(zip(sec_cols, row))
-        securities[d["SECID"]] = {
-            "ticker": d["SECID"],
-            "shortname": d.get("SHORTNAME", ""),
-            "exchange": "MOEX",
-        }
+async def get_moex_marketdata(tickers: list[str], board: str = "TQBR") -> dict[str, dict]:
+    """Batch fetch market data for all tickers."""
+    url = f"{BASE_URL}/engines/stock/markets/shares/boards/{board}/securities.json"
+    data = await fetch_json(url, {"iss.meta": "off", "iss.only": "marketdata", "marketdata.columns": "SECID,LAST,CHANGE,VOLTODAY,VALTODAY,OPEN,HIGH,LOW"})
+    if not data:
+        return {}
+    rows = data.get("marketdata", {}).get("data", [])
+    cols = ["SECID", "LAST", "CHANGE", "VOLTODAY", "VALTODAY", "OPEN", "HIGH", "LOW"]
+    result = {}
+    for r in rows:
+        d = dict(zip(cols, r))
+        secid = d.pop("SECID")
+        if secid in tickers:
+            result[secid] = d
+    return result
 
-    for row in md_data:
-        d = dict(zip(md_cols, row))
-        sec = securities.get(d["SECID"])
-        if sec:
-            sec["last"] = d.get("LAST") or d.get("MARKETPRICE")
-            sec["open"] = d.get("OPEN")
-            sec["low"] = d.get("LOW")
-            sec["high"] = d.get("HIGH")
-            sec["volume"] = d.get("VOLTODAY") or 0
-            sec["trades"] = d.get("NUMTRADES") or 0
 
-    return [v for v in securities.values() if v.get("last")]
+async def get_moex_securities_info(tickers: list[str], board: str = "TQBR") -> dict[str, dict]:
+    """Batch fetch securities info (names, lot sizes, etc.)."""
+    url = f"{BASE_URL}/engines/stock/markets/shares/boards/{board}/securities.json"
+    data = await fetch_json(url, {"iss.meta": "off", "iss.only": "securities", "securities.columns": "SECID,SHORTNAME,LOTSIZE,FACEVALUE"})
+    if not data:
+        return {}
+    rows = data.get("securities", {}).get("data", [])
+    cols = ["SECID", "SHORTNAME", "LOTSIZE", "FACEVALUE"]
+    result = {}
+    for r in rows:
+        d = dict(zip(cols, r))
+        secid = d.pop("SECID")
+        if secid in tickers:
+            result[secid] = d
+    return result
 
 
 async def get_moex_candles(
@@ -63,51 +81,38 @@ async def get_moex_candles(
     interval: int = 1,
     n_bars: int = 30,
 ) -> list[dict]:
-    """
-    Последние n_bars минутных свечей для ticker на MOEX.
-    interval: 1=1мин, 10=10мин, 60=1ч, 24=1день
-    """
-    url = (
-        f"{BASE}/engines/stock/markets/shares/boards/{board}"
-        f"/securities/{ticker}/candles.json"
-    )
-    data = await fetch_json(url, {
-        "interval": interval,
-        "iss.meta": "off",
-        "iss.reverse": "true",
-        "limit": n_bars,
-    })
+    """Fetch recent candles for a ticker."""
+    url = f"{BASE_URL}/engines/stock/markets/shares/boards/{board}/securities/{ticker}/candles.json"
+    data = await fetch_json(url, {"interval": interval, "iss.meta": "off", "iss.reverse": "true", "limit": n_bars + 2})
     if not data:
         return []
-    cols = data["candles"]["columns"]
-    return [dict(zip(cols, row)) for row in data["candles"]["data"]]
+    rows = data.get("candles", {}).get("data", [])
+    cols = data.get("candles", {}).get("columns", ["open", "close", "high", "low", "value", "volume", "begin", "end"])
+    return [dict(zip(cols, r)) for r in rows]
 
 
-async def get_moex_ticker_info(ticker: str) -> dict | None:
-    """Информация по конкретному тикеру."""
-    url = f"{BASE}/securities/{ticker}.json"
-    data = await fetch_json(url, {"iss.meta": "off"})
-    if not data:
-        return None
-    cols = data["description"]["columns"]
-    rows = data["description"]["data"]
-    info: dict[str, Any] = {}
-    for row in rows:
-        d = dict(zip(cols, row))
-        info[d["name"]] = d["value"]
-    return info or None
+async def get_moex_candles_weekly(ticker: str, board: str = "TQBR") -> list[dict]:
+    """Fetch weekly candles (interval=7) for weekly change calculation."""
+    return await get_moex_candles(ticker, board, interval=7, n_bars=3)
 
 
 async def search_moex_ticker(query: str) -> list[dict]:
-    """Поиск тикера по строке."""
-    url = f"{BASE}/securities.json"
-    data = await fetch_json(url, {
-        "q": query,
-        "iss.meta": "off",
-        "group_by": "type",
-        "limit": 10,
-    })
+    """Search for a ticker by name or SECID."""
+    url = f"{BASE_URL}/securities.json"
+    data = await fetch_json(url, {"q": query, "iss.meta": "off", "limit": 10, "group_by": "group", "group_by_filter": "stock_shares"})
     if not data:
         return []
-    cols = data["securities"]["columns"]
-    return [dict(zip(cols, row)) for row in data["securities"]["data"]]
+    rows = data.get("securities", {}).get("data", [])
+    cols = data.get("securities", {}).get("columns", [])
+    return [dict(zip(cols, r)) for r in rows]
+
+
+async def get_weekly_change(ticker: str, current_price: float, board: str = "TQBR") -> float | None:
+    """Calculate weekly price change as percentage."""
+    candles = await get_moex_candles_weekly(ticker, board)
+    if len(candles) < 2:
+        return None
+    week_ago_close = candles[-1].get("close") or candles[-1].get("open")
+    if not week_ago_close:
+        return None
+    return round((current_price - float(week_ago_close)) / float(week_ago_close) * 100, 2)
