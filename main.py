@@ -84,22 +84,22 @@ async def make_orderbook_callback(bot: Bot):
         if not user_ids:
             return
 
-        side_emoji = "🟢" if alert.side == "BID" else "🔴"
-        side_label = "покупка (BID)" if alert.side == "BID" else "продажа (ASK)"
+        side_emoji = "🟢" if alert.side == "bid" else "🔴"
+        side_label = "покупка (bid)" if alert.side == "bid" else "продажа (ask)"
         text = (
             f"📊 <b>Крупная заявка в стакане</b>\n\n"
-            f"{side_emoji} <b>{alert.ticker}</b> ({alert.exchange}) — {side_label}\n"
+            f"{side_emoji} <b>{alert.ticker}</b> — {side_label}\n"
             f"💰 Цена: <b>{alert.price:,.2f} ₽</b>\n"
             f"📦 Объём: <b>{alert.quantity:,} лот.</b> "
             f"({alert.value_rub / 1_000_000:.1f} млн ₽)\n"
-            f"📈 Превышает средний размер в <b>{alert.multiplier:.1f}×</b>"
+            f"📈 Превышает средний размер в <b>{alert.relative_size:.1f}×</b>"
         )
 
         for uid in user_ids:
             try:
                 favs = get_favorites(uid)
                 if favs:
-                    if not any(f["ticker"] == alert.ticker and f["exchange"] == alert.exchange for f in favs):
+                    if not any(f["ticker"] == alert.ticker for f in favs):
                         continue
                 await bot.send_message(uid, text, parse_mode="HTML")
             except Exception as e:
@@ -119,22 +119,23 @@ async def make_corp_reports_callback(bot: Bot):
             return
 
         priority_badge = "⭐ " if alert.is_priority else ""
+        time_str = alert.publish_time.strftime("%d.%m.%Y %H:%M") if alert.publish_time else ""
         text = (
-            f"🏢 <b>Корпоративный отчёт</b>\n\n"
-            f"{priority_badge}<b>{alert.ticker}</b> — {alert.company_name}\n"
-            f"{alert.report_type}\n"
-            f"📅 Дата: {alert.report_date}\n"
+            f"🏢 <b>Корпоративное событие</b>\n\n"
+            f"{priority_badge}<b>{alert.ticker}</b> — {alert.short_name}\n"
+            f"📰 {alert.event_type}\n"
+            f"🕐 {time_str}\n"
         )
-        if alert.description and alert.description != "—":
-            text += f"📝 {alert.description}\n"
-        if alert.url:
-            text += f"\n🔗 <a href='{alert.url}'>Открыть отчёт</a>"
+        if alert.description:
+            text += f"\n{alert.description[:300]}\n"
+        if alert.source_url:
+            text += f"\n🔗 <a href='{alert.source_url}'>Источник</a>"
 
         for uid in user_ids:
             try:
                 favs = get_favorites(uid)
                 if favs:
-                    if not any(f["ticker"] == alert.ticker and f["exchange"] == alert.exchange for f in favs):
+                    if not any(f["ticker"] == alert.ticker for f in favs):
                         continue
                 await bot.send_message(uid, text, parse_mode="HTML", disable_web_page_preview=True)
             except Exception as e:
