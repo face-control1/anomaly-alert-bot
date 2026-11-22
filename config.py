@@ -31,6 +31,7 @@ MOEX_ISS_BASE = "https://iss.moex.com/iss"
 
 # Интервал опроса биржи (секунды)
 POLL_INTERVAL_SEC: int = int(os.getenv("POLL_INTERVAL_SEC", "60"))
+SCAN_INTERVAL: int = POLL_INTERVAL_SEC  # алиас для main.py
 
 # ─── Пороги аномалий ─────────────────────────────────────────────────────────
 # Объём выше среднего в N раз считается аномальным
