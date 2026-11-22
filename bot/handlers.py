@@ -88,16 +88,7 @@ async def cb_main_menu(cb: CallbackQuery) -> None:
         "Главное меню — выбери действие:",
         reply_markup=main_menu_kb(),
     )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "about")
-async def cb_about(cb: CallbackQuery) -> None:
-    await cb.message.edit_text(
-        "ℹ️ <b>О боте AnomalyAlert</b>\n\n"
-        "Бот каждую минуту сканирует рынок и присылает алерты:\n\n"
-        "🔊 <b>Аномальный объём</b> — объём торгов превышает среднее в 3× и более\n"
-        "🚨 <b>Резкое движение</b> — цена измениласьболее чем на 3% за минуту\n"
+    await cb.answer()более чем на 3% за минуту\n"
         "📈📉 <b>Полосы Боллинджера</b> — цена вышла за 2.5σ от скользящей средней\n\n"
         "Мониторинг: топ-15 акций ММВБ + ваши персональные тикеры.\n\n"
         "💰 Стоимость: <b>250 ⭐ Stars / месяц</b>\n"
@@ -175,6 +166,8 @@ async def cb_buy(cb: CallbackQuery) -> None:
         f"📊 Топ-15 акций ММВБ + персональные тикеры{extra}",
         reply_markup=buy_menu_kb(),
         parse_mode="HTML",
+    )
+    await cb.answer()HTML",
     )
     await cb.answer()
 
@@ -700,7 +693,8 @@ async def cb_yukassa_plan(cb: CallbackQuery) -> None:
         return
 
     plan = PLANS.get(plan_key)
-   естный тариф.", show_alert=True)
+    if not plan:
+        await cb.answer("Неизвестный тариф.", show_alert=True)
         return
 
     await cb.answer("Создаём ссылку на оплату...", show_alert=False)
@@ -764,6 +758,8 @@ async def cb_trial_yukassa(cb: CallbackQuery) -> None:
             "Пробный период уже был использован. Оформите платную подписку.",
             show_alert=True,
         )
+
+
 @router.message(Command("subscribe"))
 async def cmd_subscribe(msg: Message) -> None:
     """Показывает меню подписки."""
