@@ -78,7 +78,7 @@ class CorpReportAlert:
             f"📰 <b>{self.event_type}</b>\n"
             f"{self.headline}\n"
             f"\n"
-            f"{self.description[:300]}{'\u2026' if len(self.description) > 300 else ''}"
+            f"{self.description[:300]}{'…' if len(self.description) > 300 else ''}"
             + source_link
         )
 
