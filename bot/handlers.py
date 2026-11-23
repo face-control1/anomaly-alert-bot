@@ -118,7 +118,7 @@ async def cb_about(cb: CallbackQuery) -> None:
 async def cb_status(cb: CallbackQuery) -> None:
     info = get_subscription_info(cb.from_user.id)
     if info:
-        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M UTC")
+        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M МСК")
         sub_type = "🎁 Пробная" if info["type"] == "trial" else "💎 Платная"
         text = (
             f"✅ <b>Подписка активна</b>\n\n"
@@ -152,7 +152,14 @@ async def cb_trial(cb: CallbackQuery) -> None:
             show_alert=True,
         )
         return
-    activate_trial(uid)
+    if not activate_trial(uid):
+        await cb.message.edit_text(
+            "⛔ Пробный период уже был использован.\n\nДля продолжения оформите платную подписку.",
+            reply_markup=back_kb(),
+            parse_mode="HTML",
+        )
+        await cb.answer()
+        return
     await cb.message.edit_text(
         "🎉 <b>Пробный период на 24 часа активирован!</b>\n\n"
         "Вы будете получать алерты об аномалиях на бирже.\n"
@@ -170,7 +177,7 @@ async def cb_buy(cb: CallbackQuery) -> None:
     info = get_subscription_info(cb.from_user.id)
     extra = ""
     if info:
-        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M UTC")
+        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M МСК")
         extra = f"\n\n⚠️ У вас уже есть подписка до {exp}. Новый платёж продлит её."
     await cb.message.edit_text(
         f"⭐ <b>Подписка AnomalyAlert</b>\n\n"
