@@ -42,7 +42,7 @@ else:
 
     @contextmanager
     def get_conn():
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+        os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
@@ -83,7 +83,8 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS tickers (
                     user_id     BIGINT NOT NULL REFERENCES users(user_id),
                     ticker      TEXT NOT NULL,
-                    PRIMARY KEY (user_id, ticker)
+                    exchange    TEXT NOT NULL DEFAULT 'MOEX',
+                    PRIMARY KEY (user_id, ticker, exchange)
                 )
             """)
             cur.execute("""
@@ -94,6 +95,16 @@ def init_db() -> None:
                     amount          INTEGER NOT NULL,
                     currency        TEXT NOT NULL,
                     created_at      DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS alerts_log (
+                    id          SERIAL PRIMARY KEY,
+                    ticker      TEXT NOT NULL,
+                    exchange    TEXT NOT NULL DEFAULT 'MOEX',
+                    alert_type  TEXT NOT NULL,
+                    headline    TEXT,
+                    created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
                 )
             """)
             cur.close()
@@ -114,7 +125,8 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS tickers (
                     user_id     INTEGER NOT NULL REFERENCES users(user_id),
                     ticker      TEXT NOT NULL,
-                    PRIMARY KEY (user_id, ticker)
+                    exchange    TEXT NOT NULL DEFAULT 'MOEX',
+                    PRIMARY KEY (user_id, ticker, exchange)
                 );
                 CREATE TABLE IF NOT EXISTS payments (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,6 +135,14 @@ def init_db() -> None:
                     amount          INTEGER NOT NULL,
                     currency        TEXT NOT NULL,
                     created_at      REAL NOT NULL DEFAULT (unixepoch())
+                );
+                CREATE TABLE IF NOT EXISTS alerts_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ticker      TEXT NOT NULL,
+                    exchange    TEXT NOT NULL DEFAULT 'MOEX',
+                    alert_type  TEXT NOT NULL,
+                    headline    TEXT,
+                    created_at  REAL NOT NULL DEFAULT (unixepoch())
                 );
             """)
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
@@ -248,6 +268,66 @@ def add_subscription(user_id: int, months: int = 1) -> None:
             )
 
 
+def get_all_active_user_ids() -> list[int]:
+    """Вернуть список user_id у кого есть активная подписка (для рассылки алертов)."""
+    now_ts = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT DISTINCT user_id FROM subscriptions WHERE expires_at > {PH}",
+                (now_ts,)
+            )
+            rows = cur.fetchall()
+            cur.close()
+            return [r[0] for r in rows]
+        else:
+            return [r[0] for r in conn.execute(
+                "SELECT DISTINCT user_id FROM subscriptions WHERE expires_at > ?",
+                (now_ts,)
+            ).fetchall()]
+
+
+def log_alert(ticker: str, exchange: str, alert_type: str, headline: str | None = None) -> None:
+    """Записать алерт в лог (для статистики /admin)."""
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO alerts_log (ticker, exchange, alert_type, headline) "
+                f"VALUES ({PH}, {PH}, {PH}, {PH})",
+                (ticker, exchange, alert_type, headline)
+            )
+            cur.close()
+        else:
+            conn.execute(
+                "INSERT INTO alerts_log (ticker, exchange, alert_type, headline) VALUES (?, ?, ?, ?)",
+                (ticker, exchange, alert_type, headline)
+            )
+
+
+def get_favorites(user_id: int) -> list[dict]:
+    """Вернуть избранные тикеры пользователя: [{"ticker": ..., "exchange": ...}]."""
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT ticker, exchange FROM tickers WHERE user_id = {PH}",
+                (user_id,)
+            )
+            rows = cur.fetchall()
+            cur.close()
+            return [{"ticker": r[0], "exchange": r[1]} for r in rows]
+        else:
+            return [
+                {"ticker": r[0], "exchange": r[1]}
+                for r in conn.execute(
+                    "SELECT ticker, exchange FROM tickers WHERE user_id = ?",
+                    (user_id,)
+                ).fetchall()
+            ]
+
+
 def get_user_tickers(user_id: int) -> list[str]:
     with get_conn() as conn:
         if USE_POSTGRES:
@@ -262,35 +342,35 @@ def get_user_tickers(user_id: int) -> list[str]:
             ).fetchall()]
 
 
-def add_ticker(user_id: int, ticker: str) -> None:
+def add_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO tickers (user_id, ticker) VALUES ({PH}, {PH}) ON CONFLICT DO NOTHING",
-                (user_id, ticker.upper())
+                f"INSERT INTO tickers (user_id, ticker, exchange) VALUES ({PH}, {PH}, {PH}) ON CONFLICT DO NOTHING",
+                (user_id, ticker.upper(), exchange)
             )
             cur.close()
         else:
             conn.execute(
-                "INSERT OR IGNORE INTO tickers (user_id, ticker) VALUES (?, ?)",
-                (user_id, ticker.upper())
+                "INSERT OR IGNORE INTO tickers (user_id, ticker, exchange) VALUES (?, ?, ?)",
+                (user_id, ticker.upper(), exchange)
             )
 
 
-def remove_ticker(user_id: int, ticker: str) -> None:
+def remove_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"DELETE FROM tickers WHERE user_id = {PH} AND ticker = {PH}",
-                (user_id, ticker.upper())
+                f"DELETE FROM tickers WHERE user_id = {PH} AND ticker = {PH} AND exchange = {PH}",
+                (user_id, ticker.upper(), exchange)
             )
             cur.close()
         else:
             conn.execute(
-                "DELETE FROM tickers WHERE user_id = ? AND ticker = ?",
-                (user_id, ticker.upper())
+                "DELETE FROM tickers WHERE user_id = ? AND ticker = ? AND exchange = ?",
+                (user_id, ticker.upper(), exchange)
             )
 
 
