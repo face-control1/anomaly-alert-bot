@@ -95,22 +95,20 @@ async def cb_main_menu(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "about")
 async def cb_about(cb: CallbackQuery) -> None:
-    try:
-        await cb.message.edit_text(
-            "ℹ️ <b>О боте MoexHelp</b>\n\n"
-            "Бот каждую минуту сканирует рынок и присылает алерты:\n\n"
-            "U0001f50a <b>Аномальный объём</b> — объём торгов превышает среднее в 3× и более\n"
-            "U0001f6a8 <b>Резкое движение</b> — цена изменилась более чем на 3% за минуту\n"
-            "U0001f4c8U0001f4c9 <b>Полосы Боллинджера</b> — цена вышла за 2.5σ от скользящей средней\n\n"
-            "Мониторинг: все акции ММВБ + ваши персональные тикеры.\n\n"
-            "U0001f4b0 Стоимость: <b>250 ⭐ Stars / месяц</b>\n"
-            "U0001f381 Пробный период: <b>24 часа бесплатно</b>",
-            reply_markup=back_kb(),
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
+    price = get_subscription_price()
+    await cb.message.edit_text(
+        "ℹ️ <b>О боте AnomalyAlert</b>\n\n"
+        "Бот каждую минуту сканирует <b>все акции MOEX TQBR</b> (~200+ бумаг):\n\n"
+        "🔊 <b>Аномальный объём</b> — объём торгов превышает среднее в 3× и более\n"
+        "🚨 <b>Резкое движение</b> — цена изменилась более чем на 3% за минуту\n"
+        "📈📉 <b>Полосы Боллинджера</b> — цена вышла за 2.5σ от скользящей средней\n\n"
+        f"💰 Стоимость: <b>{price['stars']} ⭐ Stars / месяц</b>\n"
+        "🎁 Пробный период: <b>24 часа бесплатно</b>",
+        reply_markup=back_kb(),
+        parse_mode="HTML",
+    )
     await cb.answer()
+
 
 
 
