@@ -69,6 +69,7 @@ class CorpReportAlert:
     def format_message(self) -> str:
         priority_tag = "🔑 Приоритет (IMOEX)\n" if self.is_priority else ""
         time_str = self.publish_time.strftime("%d.%m.%Y %H:%M")
+        source_link = ("\n\n🔗 <a href='" + self.source_url + "'>Источник</a>") if self.source_url else ""
         return (
             f"📋 <b>{self.ticker}</b> — {self.short_name}\n"
             f"🕐 {time_str}\n"
@@ -78,7 +79,7 @@ class CorpReportAlert:
             f"{self.headline}\n"
             f"\n"
             f"{self.description[:300]}{'\u2026' if len(self.description) > 300 else ''}"
-            + (f"\n\n🔗 <a href='{self.source_url}'>Источник</a>" if self.source_url else "")
+            + source_link
         )
 
 
