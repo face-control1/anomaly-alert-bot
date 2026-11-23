@@ -1,5 +1,5 @@
 """
-Все хэндлеры бота: команды, callback-кнопки, платежи.
+ÐÑÐµ ÑÑÐ½Ð´Ð»ÐµÑÑ Ð±Ð¾ÑÐ°: ÐºÐ¾Ð¼Ð°Ð½Ð´Ñ, callback-ÐºÐ½Ð¾Ð¿ÐºÐ¸, Ð¿Ð»Ð°ÑÐµÐ¶Ð¸.
 """
 import logging
 from datetime import timezone
@@ -60,51 +60,51 @@ class AdminState(StatesGroup):
     waiting_grant_user_id = State()
 
 
-# ─── /start ──────────────────────────────────────────────────────────────────
+# âââ /start ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.message(CommandStart())
 async def cmd_start(msg: Message) -> None:
     upsert_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
-    name = msg.from_user.first_name or "трейдер"
+    name = msg.from_user.first_name or "ÑÑÐµÐ¹Ð´ÐµÑ"
     await msg.answer(
-        f"👋 Привет, <b>{name}</b>!\n\n"
-        "Я <b>AnomalyAlert</b> — бот для отслеживания аномальных событий "
-        "на <b>Московской бирже</b> и <b>СПБ Бирже</b>.\n\n"
-        "🔔 Я мониторю:\n"
-        "• Аномальные объёмы торгов\n"
-        "• Резкие движения цены (>3%)\n"
-        "• Пробои полос Боллинджера\n\n"
-        "Выбери действие:",
+        f"ð ÐÑÐ¸Ð²ÐµÑ, <b>{name}</b>!\n\n"
+        "Ð¯ <b>AnomalyAlert</b> â Ð±Ð¾Ñ Ð´Ð»Ñ Ð¾ÑÑÐ»ÐµÐ¶Ð¸Ð²Ð°Ð½Ð¸Ñ Ð°Ð½Ð¾Ð¼Ð°Ð»ÑÐ½ÑÑ ÑÐ¾Ð±ÑÑÐ¸Ð¹ "
+        "Ð½Ð° <b>ÐÐ¾ÑÐºÐ¾Ð²ÑÐºÐ¾Ð¹ Ð±Ð¸ÑÐ¶Ðµ</b> Ð¸ <b>Ð¡ÐÐ ÐÐ¸ÑÐ¶Ðµ</b>.\n\n"
+        "ð Ð¯ Ð¼Ð¾Ð½Ð¸ÑÐ¾ÑÑ:\n"
+        "â¢ ÐÐ½Ð¾Ð¼Ð°Ð»ÑÐ½ÑÐµ Ð¾Ð±ÑÑÐ¼Ñ ÑÐ¾ÑÐ³Ð¾Ð²\n"
+        "â¢ Ð ÐµÐ·ÐºÐ¸Ðµ Ð´Ð²Ð¸Ð¶ÐµÐ½Ð¸Ñ ÑÐµÐ½Ñ (>3%)\n"
+        "â¢ ÐÑÐ¾Ð±Ð¾Ð¸ Ð¿Ð¾Ð»Ð¾Ñ ÐÐ¾Ð»Ð»Ð¸Ð½Ð´Ð¶ÐµÑÐ°\n\n"
+        "ÐÑÐ±ÐµÑÐ¸ Ð´ÐµÐ¹ÑÑÐ²Ð¸Ðµ:",
         reply_markup=main_menu_kb(),
         parse_mode="HTML",
     )
 
 
-# ─── Навигация ────────────────────────────────────────────────────────────────
+# âââ ÐÐ°Ð²Ð¸Ð³Ð°ÑÐ¸Ñ ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "main_menu")
 async def cb_main_menu(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
-        "Главное меню — выбери действие:",
+        "ÐÐ»Ð°Ð²Ð½Ð¾Ðµ Ð¼ÐµÐ½Ñ â Ð²ÑÐ±ÐµÑÐ¸ Ð´ÐµÐ¹ÑÑÐ²Ð¸Ðµ:",
         reply_markup=main_menu_kb(),
     )
     await cb.answer()
 
 
-# ─── Статус подписки ──────────────────────────────────────────────────────────
+# âââ Ð¡ÑÐ°ÑÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "about")
 async def cb_about(cb: CallbackQuery) -> None:
     try:
         await cb.message.edit_text(
-            "ℹ️ <b>О боте MoexHelp</b>\n\n"
-            "Бот каждую минуту сканирует рынок и присылает алерты:\n\n"
-            "U0001f50a <b>Аномальный объём</b> — объём торгов превышает среднее в 3× и более\n"
-            "U0001f6a8 <b>Резкое движение</b> — цена изменилась более чем на 3% за минуту\n"
-            "U0001f4c8U0001f4c9 <b>Полосы Боллинджера</b> — цена вышла за 2.5σ от скользящей средней\n\n"
-            "Мониторинг: все акции ММВБ + ваши персональные тикеры.\n\n"
-            "U0001f4b0 Стоимость: <b>250 ⭐ Stars / месяц</b>\n"
-            "U0001f381 Пробный период: <b>24 часа бесплатно</b>",
+            "â¹ï¸ <b>Ð Ð±Ð¾ÑÐµ MoexHelp</b>\n\n"
+            "ÐÐ¾Ñ ÐºÐ°Ð¶Ð´ÑÑ Ð¼Ð¸Ð½ÑÑÑ ÑÐºÐ°Ð½Ð¸ÑÑÐµÑ ÑÑÐ½Ð¾Ðº Ð¸ Ð¿ÑÐ¸ÑÑÐ»Ð°ÐµÑ Ð°Ð»ÐµÑÑÑ:\n\n"
+            "🔊 <b>ÐÐ½Ð¾Ð¼Ð°Ð»ÑÐ½ÑÐ¹ Ð¾Ð±ÑÑÐ¼</b> â Ð¾Ð±ÑÑÐ¼ ÑÐ¾ÑÐ³Ð¾Ð² Ð¿ÑÐµÐ²ÑÑÐ°ÐµÑ ÑÑÐµÐ´Ð½ÐµÐµ Ð² 3Ã Ð¸ Ð±Ð¾Ð»ÐµÐµ\n"
+            "🚨 <b>Ð ÐµÐ·ÐºÐ¾Ðµ Ð´Ð²Ð¸Ð¶ÐµÐ½Ð¸Ðµ</b> â ÑÐµÐ½Ð° Ð¸Ð·Ð¼ÐµÐ½Ð¸Ð»Ð°ÑÑ Ð±Ð¾Ð»ÐµÐµ ÑÐµÐ¼ Ð½Ð° 3% Ð·Ð° Ð¼Ð¸Ð½ÑÑÑ\n"
+            "📈📉 <b>ÐÐ¾Ð»Ð¾ÑÑ ÐÐ¾Ð»Ð»Ð¸Ð½Ð´Ð¶ÐµÑÐ°</b> â ÑÐµÐ½Ð° Ð²ÑÑÐ»Ð° Ð·Ð° 2.5Ï Ð¾Ñ ÑÐºÐ¾Ð»ÑÐ·ÑÑÐµÐ¹ ÑÑÐµÐ´Ð½ÐµÐ¹\n\n"
+            "ÐÐ¾Ð½Ð¸ÑÐ¾ÑÐ¸Ð½Ð³: Ð²ÑÐµ Ð°ÐºÑÐ¸Ð¸ ÐÐÐÐ + Ð²Ð°ÑÐ¸ Ð¿ÐµÑÑÐ¾Ð½Ð°Ð»ÑÐ½ÑÐµ ÑÐ¸ÐºÐµÑÑ.\n\n"
+            "💰 Ð¡ÑÐ¾Ð¸Ð¼Ð¾ÑÑÑ: <b>250 â­ Stars / Ð¼ÐµÑÑÑ</b>\n"
+            "🎁 ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´: <b>24 ÑÐ°ÑÐ° Ð±ÐµÑÐ¿Ð»Ð°ÑÐ½Ð¾</b>",
             reply_markup=back_kb(),
             parse_mode="HTML",
         )
@@ -118,17 +118,17 @@ async def cb_about(cb: CallbackQuery) -> None:
 async def cb_status(cb: CallbackQuery) -> None:
     info = get_subscription_info(cb.from_user.id)
     if info:
-        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M МСК")
-        sub_type = "🎁 Пробная" if info["type"] == "trial" else "💎 Платная"
+        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M ÐÐ¡Ð")
+        sub_type = "ð ÐÑÐ¾Ð±Ð½Ð°Ñ" if info["type"] == "trial" else "ð ÐÐ»Ð°ÑÐ½Ð°Ñ"
         text = (
-            f"✅ <b>Подписка активна</b>\n\n"
-            f"Тип: {sub_type}\n"
-            f"Действует до: <b>{exp}</b>"
+            f"â <b>ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° Ð°ÐºÑÐ¸Ð²Ð½Ð°</b>\n\n"
+            f"Ð¢Ð¸Ð¿: {sub_type}\n"
+            f"ÐÐµÐ¹ÑÑÐ²ÑÐµÑ Ð´Ð¾: <b>{exp}</b>"
         )
     else:
         text = (
-            "❌ <b>Подписка не активна</b>\n\n"
-            "Оформите подписку, чтобы получать алерты."
+            "â <b>ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° Ð½Ðµ Ð°ÐºÑÐ¸Ð²Ð½Ð°</b>\n\n"
+            "ÐÑÐ¾ÑÐ¼Ð¸ÑÐµ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ, ÑÑÐ¾Ð±Ñ Ð¿Ð¾Ð»ÑÑÐ°ÑÑ Ð°Ð»ÐµÑÑÑ."
         )
     await cb.message.edit_text(
         text,
@@ -138,52 +138,52 @@ async def cb_status(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-# ─── Пробный период ───────────────────────────────────────────────────────────
+# âââ ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "trial")
 async def cb_trial(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
     if has_active_subscription(uid):
-        await cb.answer("У вас уже есть активная подписка!", show_alert=True)
+        await cb.answer("Ð£ Ð²Ð°Ñ ÑÐ¶Ðµ ÐµÑÑÑ Ð°ÐºÑÐ¸Ð²Ð½Ð°Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ°!", show_alert=True)
         return
     if had_trial(uid):
         await cb.answer(
-            "Пробный период уже был использован. Оформите платную подписку.",
+            "ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ ÑÐ¶Ðµ Ð±ÑÐ» Ð¸ÑÐ¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°Ð½. ÐÑÐ¾ÑÐ¼Ð¸ÑÐµ Ð¿Ð»Ð°ÑÐ½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ.",
             show_alert=True,
         )
         return
     if not activate_trial(uid):
         await cb.message.edit_text(
-            "⛔ Пробный период уже был использован.\n\nДля продолжения оформите платную подписку.",
+            "â ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ ÑÐ¶Ðµ Ð±ÑÐ» Ð¸ÑÐ¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°Ð½.\n\nÐÐ»Ñ Ð¿ÑÐ¾Ð´Ð¾Ð»Ð¶ÐµÐ½Ð¸Ñ Ð¾ÑÐ¾ÑÐ¼Ð¸ÑÐµ Ð¿Ð»Ð°ÑÐ½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ.",
             reply_markup=back_kb(),
             parse_mode="HTML",
         )
         await cb.answer()
         return
     await cb.message.edit_text(
-        "🎉 <b>Пробный период на 24 часа активирован!</b>\n\n"
-        "Вы будете получать алерты об аномалиях на бирже.\n"
-        "После окончания пробного периода оформите платную подписку.",
+        "ð <b>ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð½Ð° 24 ÑÐ°ÑÐ° Ð°ÐºÑÐ¸Ð²Ð¸ÑÐ¾Ð²Ð°Ð½!</b>\n\n"
+        "ÐÑ Ð±ÑÐ´ÐµÑÐµ Ð¿Ð¾Ð»ÑÑÐ°ÑÑ Ð°Ð»ÐµÑÑÑ Ð¾Ð± Ð°Ð½Ð¾Ð¼Ð°Ð»Ð¸ÑÑ Ð½Ð° Ð±Ð¸ÑÐ¶Ðµ.\n"
+        "ÐÐ¾ÑÐ»Ðµ Ð¾ÐºÐ¾Ð½ÑÐ°Ð½Ð¸Ñ Ð¿ÑÐ¾Ð±Ð½Ð¾Ð³Ð¾ Ð¿ÐµÑÐ¸Ð¾Ð´Ð° Ð¾ÑÐ¾ÑÐ¼Ð¸ÑÐµ Ð¿Ð»Ð°ÑÐ½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ.",
         reply_markup=back_kb(),
         parse_mode="HTML",
     )
-    await cb.answer("Пробный период активирован!")
+    await cb.answer("ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð°ÐºÑÐ¸Ð²Ð¸ÑÐ¾Ð²Ð°Ð½!")
 
 
-# ─── Покупка подписки ─────────────────────────────────────────────────────────
+# âââ ÐÐ¾ÐºÑÐ¿ÐºÐ° Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "buy")
 async def cb_buy(cb: CallbackQuery) -> None:
     info = get_subscription_info(cb.from_user.id)
     extra = ""
     if info:
-        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M МСК")
-        extra = f"\n\n⚠️ У вас уже есть подписка до {exp}. Новый платёж продлит её."
+        exp = info["expires_at"].strftime("%d.%m.%Y %H:%M ÐÐ¡Ð")
+        extra = f"\n\nâ ï¸ Ð£ Ð²Ð°Ñ ÑÐ¶Ðµ ÐµÑÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ° Ð´Ð¾ {exp}. ÐÐ¾Ð²ÑÐ¹ Ð¿Ð»Ð°ÑÑÐ¶ Ð¿ÑÐ¾Ð´Ð»Ð¸Ñ ÐµÑ."
     await cb.message.edit_text(
-        f"⭐ <b>Подписка AnomalyAlert</b>\n\n"
-        f"💰 Стоимость: <b>{SUBSCRIPTION_PRICE_STARS} Telegram Stars</b> / месяц\n"
-        f"🔄 Мониторинг каждые 60 секунд\n"
-        f"📊 Топ-15 акций ММВБ + персональные тикеры{extra}",
+        f"â­ <b>ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° AnomalyAlert</b>\n\n"
+        f"ð° Ð¡ÑÐ¾Ð¸Ð¼Ð¾ÑÑÑ: <b>{SUBSCRIPTION_PRICE_STARS} Telegram Stars</b> / Ð¼ÐµÑÑÑ\n"
+        f"ð ÐÐ¾Ð½Ð¸ÑÐ¾ÑÐ¸Ð½Ð³ ÐºÐ°Ð¶Ð´ÑÐµ 60 ÑÐµÐºÑÐ½Ð´\n"
+        f"ð Ð¢Ð¾Ð¿-15 Ð°ÐºÑÐ¸Ð¹ ÐÐÐÐ + Ð¿ÐµÑÑÐ¾Ð½Ð°Ð»ÑÐ½ÑÐµ ÑÐ¸ÐºÐµÑÑ{extra}",
         reply_markup=buy_menu_kb(),
         parse_mode="HTML",
     )
@@ -198,7 +198,7 @@ async def cb_pay_stars(cb: CallbackQuery, bot: Bot) -> None:
         description=SUBSCRIPTION_DESCRIPTION,
         payload=f"sub_{cb.from_user.id}",
         currency="XTR",   # Telegram Stars
-        prices=[LabeledPrice(label="Подписка 30 дней", amount=SUBSCRIPTION_PRICE_STARS)],
+        prices=[LabeledPrice(label="ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° 30 Ð´Ð½ÐµÐ¹", amount=SUBSCRIPTION_PRICE_STARS)],
     )
     await cb.answer()
 
@@ -213,14 +213,14 @@ async def payment_success(msg: Message) -> None:
     p = msg.successful_payment
     activate_paid(msg.from_user.id, p.provider_payment_charge_id, p.total_amount)
     await msg.answer(
-        "✅ <b>Оплата прошла успешно!</b>\n\n"
-        f"Вы оплатили <b>{p.total_amount} ⭐ Stars</b>.\n"
-        "Подписка активна на 30 дней. Алерты уже идут!\n\n"
-        "Настройте персональные тикеры через меню «📋 Мои тикеры».",
+        "â <b>ÐÐ¿Ð»Ð°ÑÐ° Ð¿ÑÐ¾ÑÐ»Ð° ÑÑÐ¿ÐµÑÐ½Ð¾!</b>\n\n"
+        f"ÐÑ Ð¾Ð¿Ð»Ð°ÑÐ¸Ð»Ð¸ <b>{p.total_amount} â­ Stars</b>.\n"
+        "ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° Ð°ÐºÑÐ¸Ð²Ð½Ð° Ð½Ð° 30 Ð´Ð½ÐµÐ¹. ÐÐ»ÐµÑÑÑ ÑÐ¶Ðµ Ð¸Ð´ÑÑ!\n\n"
+        "ÐÐ°ÑÑÑÐ¾Ð¹ÑÐµ Ð¿ÐµÑÑÐ¾Ð½Ð°Ð»ÑÐ½ÑÐµ ÑÐ¸ÐºÐµÑÑ ÑÐµÑÐµÐ· Ð¼ÐµÐ½Ñ Â«ð ÐÐ¾Ð¸ ÑÐ¸ÐºÐµÑÑÂ».",
         reply_markup=main_menu_kb(),
         parse_mode="HTML",
     )
-    logger.info("Оплата от user_id=%d, charge_id=%s, stars=%d",
+    logger.info("ÐÐ¿Ð»Ð°ÑÐ° Ð¾Ñ user_id=%d, charge_id=%s, stars=%d",
                 msg.from_user.id, p.provider_payment_charge_id, p.total_amount)
 
 
@@ -229,26 +229,26 @@ async def payment_refund(msg: Message) -> None:
     p = msg.refunded_payment
     deactivate_subscription(p.provider_payment_charge_id)
     await msg.answer(
-        "↩️ Возврат Stars выполнен. Ваша подписка деактивирована.",
+        "â©ï¸ ÐÐ¾Ð·Ð²ÑÐ°Ñ Stars Ð²ÑÐ¿Ð¾Ð»Ð½ÐµÐ½. ÐÐ°ÑÐ° Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ° Ð´ÐµÐ°ÐºÑÐ¸Ð²Ð¸ÑÐ¾Ð²Ð°Ð½Ð°.",
         reply_markup=main_menu_kb(),
     )
 
 
-# ─── Персональные тикеры ──────────────────────────────────────────────────────
+# âââ ÐÐµÑÑÐ¾Ð½Ð°Ð»ÑÐ½ÑÐµ ÑÐ¸ÐºÐµÑÑ ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "my_tickers")
 async def cb_my_tickers(cb: CallbackQuery) -> None:
     if not has_active_subscription(cb.from_user.id):
         await cb.answer(
-            "Персональные тикеры доступны только с активной подпиской.",
+            "ÐÐµÑÑÐ¾Ð½Ð°Ð»ÑÐ½ÑÐµ ÑÐ¸ÐºÐµÑÑ Ð´Ð¾ÑÑÑÐ¿Ð½Ñ ÑÐ¾Ð»ÑÐºÐ¾ Ñ Ð°ÐºÑÐ¸Ð²Ð½Ð¾Ð¹ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¾Ð¹.",
             show_alert=True,
         )
         return
     tickers = get_user_tickers(cb.from_user.id)
     if tickers:
-        text = "📋 <b>Ваши тикеры</b>\nНажмите на тикер, чтобы удалить его:"
+        text = "ð <b>ÐÐ°ÑÐ¸ ÑÐ¸ÐºÐµÑÑ</b>\nÐÐ°Ð¶Ð¼Ð¸ÑÐµ Ð½Ð° ÑÐ¸ÐºÐµÑ, ÑÑÐ¾Ð±Ñ ÑÐ´Ð°Ð»Ð¸ÑÑ ÐµÐ³Ð¾:"
     else:
-        text = "📋 <b>Ваши тикеры</b>\nСписок пуст. Добавьте тикеры для отслеживания:"
+        text = "ð <b>ÐÐ°ÑÐ¸ ÑÐ¸ÐºÐµÑÑ</b>\nÐ¡Ð¿Ð¸ÑÐ¾Ðº Ð¿ÑÑÑ. ÐÐ¾Ð±Ð°Ð²ÑÑÐµ ÑÐ¸ÐºÐµÑÑ Ð´Ð»Ñ Ð¾ÑÑÐ»ÐµÐ¶Ð¸Ð²Ð°Ð½Ð¸Ñ:"
     await cb.message.edit_text(
         text,
         reply_markup=tickers_kb(tickers),
@@ -261,11 +261,11 @@ async def cb_my_tickers(cb: CallbackQuery) -> None:
 async def cb_add_ticker(cb: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddTickerState.waiting_for_ticker)
     await cb.message.edit_text(
-        "✏️ Введите тикер в формате <b>TICKER:EXCHANGE</b>\n\n"
-        "Примеры:\n"
-        "• <code>SBER:MOEX</code>\n"
-        "• <code>AAPL:SPBEX</code>\n\n"
-        "Или просто тикер (например <code>LKOH</code>) — по умолчанию MOEX.",
+        "âï¸ ÐÐ²ÐµÐ´Ð¸ÑÐµ ÑÐ¸ÐºÐµÑ Ð² ÑÐ¾ÑÐ¼Ð°ÑÐµ <b>TICKER:EXCHANGE</b>\n\n"
+        "ÐÑÐ¸Ð¼ÐµÑÑ:\n"
+        "â¢ <code>SBER:MOEX</code>\n"
+        "â¢ <code>AAPL:SPBEX</code>\n\n"
+        "ÐÐ»Ð¸ Ð¿ÑÐ¾ÑÑÐ¾ ÑÐ¸ÐºÐµÑ (Ð½Ð°Ð¿ÑÐ¸Ð¼ÐµÑ <code>LKOH</code>) â Ð¿Ð¾ ÑÐ¼Ð¾Ð»ÑÐ°Ð½Ð¸Ñ MOEX.",
         reply_markup=back_kb("my_tickers"),
         parse_mode="HTML",
     )
@@ -282,19 +282,19 @@ async def handle_ticker_input(msg: Message, state: FSMContext) -> None:
         ticker, exchange = raw, "MOEX"
 
     if not ticker.isalpha():
-        await msg.answer("❌ Неверный формат тикера.", reply_markup=main_menu_kb())
+        await msg.answer("â ÐÐµÐ²ÐµÑÐ½ÑÐ¹ ÑÐ¾ÑÐ¼Ð°Ñ ÑÐ¸ÐºÐµÑÐ°.", reply_markup=main_menu_kb())
         return
 
     exchange = exchange if exchange in ("MOEX", "SPBEX") else "MOEX"
     added = add_user_ticker(msg.from_user.id, ticker, exchange)
     if added:
         await msg.answer(
-            f"✅ Тикер <b>{ticker} ({exchange})</b> добавлен в отслеживание.",
+            f"â Ð¢Ð¸ÐºÐµÑ <b>{ticker} ({exchange})</b> Ð´Ð¾Ð±Ð°Ð²Ð»ÐµÐ½ Ð² Ð¾ÑÑÐ»ÐµÐ¶Ð¸Ð²Ð°Ð½Ð¸Ðµ.",
             reply_markup=main_menu_kb(),
             parse_mode="HTML",
         )
     else:
-        await msg.answer("⚠️ Тикер уже в списке или произошла ошибка.",
+        await msg.answer("â ï¸ Ð¢Ð¸ÐºÐµÑ ÑÐ¶Ðµ Ð² ÑÐ¿Ð¸ÑÐºÐµ Ð¸Ð»Ð¸ Ð¿ÑÐ¾Ð¸Ð·Ð¾ÑÐ»Ð° Ð¾ÑÐ¸Ð±ÐºÐ°.",
                          reply_markup=main_menu_kb())
 
 
@@ -304,31 +304,31 @@ async def cb_del_ticker(cb: CallbackQuery) -> None:
     remove_user_ticker(cb.from_user.id, ticker, exchange)
     tickers = get_user_tickers(cb.from_user.id)
     if tickers:
-        text = "📋 <b>Ваши тикеры</b>\nНажмите на тикер, чтобы удалить его:"
+        text = "ð <b>ÐÐ°ÑÐ¸ ÑÐ¸ÐºÐµÑÑ</b>\nÐÐ°Ð¶Ð¼Ð¸ÑÐµ Ð½Ð° ÑÐ¸ÐºÐµÑ, ÑÑÐ¾Ð±Ñ ÑÐ´Ð°Ð»Ð¸ÑÑ ÐµÐ³Ð¾:"
     else:
-        text = "📋 <b>Ваши тикеры</b>\nСписок пуст."
+        text = "ð <b>ÐÐ°ÑÐ¸ ÑÐ¸ÐºÐµÑÑ</b>\nÐ¡Ð¿Ð¸ÑÐ¾Ðº Ð¿ÑÑÑ."
     await cb.message.edit_text(
         text,
         reply_markup=tickers_kb(tickers),
         parse_mode="HTML",
     )
-    await cb.answer(f"Тикер {ticker} удалён")
+    await cb.answer(f"Ð¢Ð¸ÐºÐµÑ {ticker} ÑÐ´Ð°Ð»ÑÐ½")
 
 
-# ─── Избранные акции ──────────────────────────────────────────────────────────
+# âââ ÐÐ·Ð±ÑÐ°Ð½Ð½ÑÐµ Ð°ÐºÑÐ¸Ð¸ ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def _favs_text(favs: list[dict]) -> str:
     if favs:
         return (
-            "🌟 <b>Избранные акции</b>\n\n"
-            "Алерты будут приходить <b>только по этим акциям</b>.\n"
-            "Нажмите на акцию, чтобы удалить её из избранного:"
+            "ð <b>ÐÐ·Ð±ÑÐ°Ð½Ð½ÑÐµ Ð°ÐºÑÐ¸Ð¸</b>\n\n"
+            "ÐÐ»ÐµÑÑÑ Ð±ÑÐ´ÑÑ Ð¿ÑÐ¸ÑÐ¾Ð´Ð¸ÑÑ <b>ÑÐ¾Ð»ÑÐºÐ¾ Ð¿Ð¾ ÑÑÐ¸Ð¼ Ð°ÐºÑÐ¸ÑÐ¼</b>.\n"
+            "ÐÐ°Ð¶Ð¼Ð¸ÑÐµ Ð½Ð° Ð°ÐºÑÐ¸Ñ, ÑÑÐ¾Ð±Ñ ÑÐ´Ð°Ð»Ð¸ÑÑ ÐµÑ Ð¸Ð· Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ð³Ð¾:"
         )
     return (
-        "🌟 <b>Избранные акции</b>\n\n"
-        "Список пуст. Пока избранное пустое — вы получаете "
-        "<b>все алерты по рынку</b>.\n\n"
-        "Добавьте акции, чтобы получать алерты только по ним."
+        "ð <b>ÐÐ·Ð±ÑÐ°Ð½Ð½ÑÐµ Ð°ÐºÑÐ¸Ð¸</b>\n\n"
+        "Ð¡Ð¿Ð¸ÑÐ¾Ðº Ð¿ÑÑÑ. ÐÐ¾ÐºÐ° Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ðµ Ð¿ÑÑÑÐ¾Ðµ â Ð²Ñ Ð¿Ð¾Ð»ÑÑÐ°ÐµÑÐµ "
+        "<b>Ð²ÑÐµ Ð°Ð»ÐµÑÑÑ Ð¿Ð¾ ÑÑÐ½ÐºÑ</b>.\n\n"
+        "ÐÐ¾Ð±Ð°Ð²ÑÑÐµ Ð°ÐºÑÐ¸Ð¸, ÑÑÐ¾Ð±Ñ Ð¿Ð¾Ð»ÑÑÐ°ÑÑ Ð°Ð»ÐµÑÑÑ ÑÐ¾Ð»ÑÐºÐ¾ Ð¿Ð¾ Ð½Ð¸Ð¼."
     )
 
 
@@ -336,7 +336,7 @@ def _favs_text(favs: list[dict]) -> str:
 async def cb_favorites(cb: CallbackQuery) -> None:
     if not has_active_subscription(cb.from_user.id):
         await cb.answer(
-            "Избранное доступно только с активной подпиской.",
+            "ÐÐ·Ð±ÑÐ°Ð½Ð½Ð¾Ðµ Ð´Ð¾ÑÑÑÐ¿Ð½Ð¾ ÑÐ¾Ð»ÑÐºÐ¾ Ñ Ð°ÐºÑÐ¸Ð²Ð½Ð¾Ð¹ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¾Ð¹.",
             show_alert=True,
         )
         return
@@ -353,9 +353,9 @@ async def cb_favorites(cb: CallbackQuery) -> None:
 async def cb_add_favorite(cb: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddFavoriteState.waiting_for_ticker)
     await cb.message.edit_text(
-        "✏️ <b>Добавить акцию в избранное</b>\n\n"
-        "Введите тикер акции (только MOEX):\n\n"
-        "Примеры: <code>SBER</code>, <code>LKOH</code>, <code>GAZP</code>",
+        "âï¸ <b>ÐÐ¾Ð±Ð°Ð²Ð¸ÑÑ Ð°ÐºÑÐ¸Ñ Ð² Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ðµ</b>\n\n"
+        "ÐÐ²ÐµÐ´Ð¸ÑÐµ ÑÐ¸ÐºÐµÑ Ð°ÐºÑÐ¸Ð¸ (ÑÐ¾Ð»ÑÐºÐ¾ MOEX):\n\n"
+        "ÐÑÐ¸Ð¼ÐµÑÑ: <code>SBER</code>, <code>LKOH</code>, <code>GAZP</code>",
         reply_markup=back_kb("favorites"),
         parse_mode="HTML",
     )
@@ -366,13 +366,13 @@ async def cb_add_favorite(cb: CallbackQuery, state: FSMContext) -> None:
 async def handle_favorite_input(msg: Message, state: FSMContext) -> None:
     await state.clear()
     ticker = msg.text.strip().upper()
-    # Убираем лишнее (если ввели SBER:MOEX — берём только тикер)
+    # Ð£Ð±Ð¸ÑÐ°ÐµÐ¼ Ð»Ð¸ÑÐ½ÐµÐµ (ÐµÑÐ»Ð¸ Ð²Ð²ÐµÐ»Ð¸ SBER:MOEX â Ð±ÐµÑÑÐ¼ ÑÐ¾Ð»ÑÐºÐ¾ ÑÐ¸ÐºÐµÑ)
     if ":" in ticker:
         ticker = ticker.split(":")[0]
 
     if not ticker.isalpha() or len(ticker) > 10:
         await msg.answer(
-            "❌ Неверный формат. Введите тикер буквами, например: <code>SBER</code>",
+            "â ÐÐµÐ²ÐµÑÐ½ÑÐ¹ ÑÐ¾ÑÐ¼Ð°Ñ. ÐÐ²ÐµÐ´Ð¸ÑÐµ ÑÐ¸ÐºÐµÑ Ð±ÑÐºÐ²Ð°Ð¼Ð¸, Ð½Ð°Ð¿ÑÐ¸Ð¼ÐµÑ: <code>SBER</code>",
             reply_markup=main_menu_kb(),
             parse_mode="HTML",
         )
@@ -381,14 +381,14 @@ async def handle_favorite_input(msg: Message, state: FSMContext) -> None:
     added = add_favorite(msg.from_user.id, ticker, "MOEX")
     if added:
         await msg.answer(
-            f"✅ <b>{ticker}</b> добавлен в избранное!\n\n"
-            "Теперь вы будете получать алерты только по акциям из избранного.",
+            f"â <b>{ticker}</b> Ð´Ð¾Ð±Ð°Ð²Ð»ÐµÐ½ Ð² Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ðµ!\n\n"
+            "Ð¢ÐµÐ¿ÐµÑÑ Ð²Ñ Ð±ÑÐ´ÐµÑÐµ Ð¿Ð¾Ð»ÑÑÐ°ÑÑ Ð°Ð»ÐµÑÑÑ ÑÐ¾Ð»ÑÐºÐ¾ Ð¿Ð¾ Ð°ÐºÑÐ¸ÑÐ¼ Ð¸Ð· Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ð³Ð¾.",
             reply_markup=main_menu_kb(),
             parse_mode="HTML",
         )
     else:
         await msg.answer(
-            "⚠️ Акция уже в избранном.",
+            "â ï¸ ÐÐºÑÐ¸Ñ ÑÐ¶Ðµ Ð² Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ð¼.",
             reply_markup=main_menu_kb(),
         )
 
@@ -405,54 +405,54 @@ async def cb_del_favorite(cb: CallbackQuery) -> None:
         reply_markup=favorites_kb(favs),
         parse_mode="HTML",
     )
-    await cb.answer(f"{ticker} удалён из избранного")
+    await cb.answer(f"{ticker} ÑÐ´Ð°Ð»ÑÐ½ Ð¸Ð· Ð¸Ð·Ð±ÑÐ°Ð½Ð½Ð¾Ð³Ð¾")
 
 
-# ─── Поддержка ────────────────────────────────────────────────────────────────
+# âââ ÐÐ¾Ð´Ð´ÐµÑÐ¶ÐºÐ° ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "support")
 async def cb_support(cb: CallbackQuery) -> None:
     if SUPPORT_USERNAME:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
-                text="✉️ Написать в поддержку",
+                text="âï¸ ÐÐ°Ð¿Ð¸ÑÐ°ÑÑ Ð² Ð¿Ð¾Ð´Ð´ÐµÑÐ¶ÐºÑ",
                 url=f"https://t.me/{SUPPORT_USERNAME}",
             )],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")],
+            [InlineKeyboardButton(text="ð ÐÐ°Ð·Ð°Ð´", callback_data="main_menu")],
         ])
         text = (
-            "💬 <b>Поддержка</b>\n\n"
-            "Если у вас возникли вопросы или проблемы — напишите нам!\n\n"
-            "Мы отвечаем в течение 24 часов."
+            "ð¬ <b>ÐÐ¾Ð´Ð´ÐµÑÐ¶ÐºÐ°</b>\n\n"
+            "ÐÑÐ»Ð¸ Ñ Ð²Ð°Ñ Ð²Ð¾Ð·Ð½Ð¸ÐºÐ»Ð¸ Ð²Ð¾Ð¿ÑÐ¾ÑÑ Ð¸Ð»Ð¸ Ð¿ÑÐ¾Ð±Ð»ÐµÐ¼Ñ â Ð½Ð°Ð¿Ð¸ÑÐ¸ÑÐµ Ð½Ð°Ð¼!\n\n"
+            "ÐÑ Ð¾ÑÐ²ÐµÑÐ°ÐµÐ¼ Ð² ÑÐµÑÐµÐ½Ð¸Ðµ 24 ÑÐ°ÑÐ¾Ð²."
         )
     else:
         kb = back_kb()
-        text = "💬 <b>Поддержка</b>\n\nПоддержка временно недоступна. Попробуйте позже."
+        text = "ð¬ <b>ÐÐ¾Ð´Ð´ÐµÑÐ¶ÐºÐ°</b>\n\nÐÐ¾Ð´Ð´ÐµÑÐ¶ÐºÐ° Ð²ÑÐµÐ¼ÐµÐ½Ð½Ð¾ Ð½ÐµÐ´Ð¾ÑÑÑÐ¿Ð½Ð°. ÐÐ¾Ð¿ÑÐ¾Ð±ÑÐ¹ÑÐµ Ð¿Ð¾Ð·Ð¶Ðµ."
     await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await cb.answer()
 
 
-# ─── Команды администратора ───────────────────────────────────────────────────
+# âââ ÐÐ¾Ð¼Ð°Ð½Ð´Ñ Ð°Ð´Ð¼Ð¸Ð½Ð¸ÑÑÑÐ°ÑÐ¾ÑÐ° âââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def _admin_panel_text() -> str:
     s = get_stats()
     price = get_subscription_price()
     return (
-        "🛠 <b>Панель администратора</b>\n\n"
-        f"👤 Всего пользователей: <b>{s['total_users']}</b>\n"
-        f"✅ Активных подписок: <b>{s['active_subs']}</b>\n"
-        f"💎 Платных подписок: <b>{s['paid_subs']}</b>\n"
-        f"🔔 Алертов за 24ч: <b>{s['alerts_today']}</b>\n\n"
-        f"💰 Текущая цена: <b>{price} ⭐ Stars / мес</b>"
+        "ð  <b>ÐÐ°Ð½ÐµÐ»Ñ Ð°Ð´Ð¼Ð¸Ð½Ð¸ÑÑÑÐ°ÑÐ¾ÑÐ°</b>\n\n"
+        f"ð¤ ÐÑÐµÐ³Ð¾ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»ÐµÐ¹: <b>{s['total_users']}</b>\n"
+        f"â ÐÐºÑÐ¸Ð²Ð½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐ¾Ðº: <b>{s['active_subs']}</b>\n"
+        f"ð ÐÐ»Ð°ÑÐ½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐ¾Ðº: <b>{s['paid_subs']}</b>\n"
+        f"ð ÐÐ»ÐµÑÑÐ¾Ð² Ð·Ð° 24Ñ: <b>{s['alerts_today']}</b>\n\n"
+        f"ð° Ð¢ÐµÐºÑÑÐ°Ñ ÑÐµÐ½Ð°: <b>{price} â­ Stars / Ð¼ÐµÑ</b>"
     )
 
 
 def _admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Изменить цену подписки", callback_data="admin_set_price")],
-        [InlineKeyboardButton(text="🎁 Выдать trial пользователю", callback_data="admin_grant_trial")],
-        [InlineKeyboardButton(text="👥 Список пользователей", callback_data="admin_users")],
-        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="ð° ÐÐ·Ð¼ÐµÐ½Ð¸ÑÑ ÑÐµÐ½Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸", callback_data="admin_set_price")],
+        [InlineKeyboardButton(text="ð ÐÑÐ´Ð°ÑÑ trial Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ", callback_data="admin_grant_trial")],
+        [InlineKeyboardButton(text="ð¥ Ð¡Ð¿Ð¸ÑÐ¾Ðº Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»ÐµÐ¹", callback_data="admin_users")],
+        [InlineKeyboardButton(text="ð¢ Ð Ð°ÑÑÑÐ»ÐºÐ°", callback_data="admin_broadcast")],
     ])
 
 
@@ -470,7 +470,7 @@ async def cmd_admin(msg: Message) -> None:
 @router.callback_query(F.data == "admin_panel")
 async def cb_admin_panel(cb: CallbackQuery) -> None:
     if cb.from_user.id not in ADMIN_IDS:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("ÐÐµÑ Ð´Ð¾ÑÑÑÐ¿Ð°", show_alert=True)
         return
     await cb.message.edit_text(
         _admin_panel_text(),
@@ -480,20 +480,20 @@ async def cb_admin_panel(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-# ── Изменить цену подписки ────────────────────────────────────────────────────
+# ââ ÐÐ·Ð¼ÐµÐ½Ð¸ÑÑ ÑÐµÐ½Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ ââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "admin_set_price")
 async def cb_admin_set_price(cb: CallbackQuery, state: FSMContext) -> None:
     if cb.from_user.id not in ADMIN_IDS:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("ÐÐµÑ Ð´Ð¾ÑÑÑÐ¿Ð°", show_alert=True)
         return
     current = get_subscription_price()
     await state.set_state(AdminState.waiting_new_price)
     await cb.message.edit_text(
-        f"💰 Текущая цена: <b>{current} ⭐ Stars</b>\n\n"
-        "Введите новую цену подписки в Stars (целое число, минимум 1):",
+        f"ð° Ð¢ÐµÐºÑÑÐ°Ñ ÑÐµÐ½Ð°: <b>{current} â­ Stars</b>\n\n"
+        "ÐÐ²ÐµÐ´Ð¸ÑÐµ Ð½Ð¾Ð²ÑÑ ÑÐµÐ½Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ Ð² Stars (ÑÐµÐ»Ð¾Ðµ ÑÐ¸ÑÐ»Ð¾, Ð¼Ð¸Ð½Ð¸Ð¼ÑÐ¼ 1):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data="admin_panel")]
+            [InlineKeyboardButton(text="âï¸ ÐÑÐ¼ÐµÐ½Ð°", callback_data="admin_panel")]
         ]),
         parse_mode="HTML",
     )
@@ -509,31 +509,31 @@ async def handle_new_price(msg: Message, state: FSMContext) -> None:
         new_price = int(msg.text.strip())
         assert new_price >= 1
     except (ValueError, AssertionError):
-        await msg.answer("❌ Неверное значение. Введите целое положительное число.")
+        await msg.answer("â ÐÐµÐ²ÐµÑÐ½Ð¾Ðµ Ð·Ð½Ð°ÑÐµÐ½Ð¸Ðµ. ÐÐ²ÐµÐ´Ð¸ÑÐµ ÑÐµÐ»Ð¾Ðµ Ð¿Ð¾Ð»Ð¾Ð¶Ð¸ÑÐµÐ»ÑÐ½Ð¾Ðµ ÑÐ¸ÑÐ»Ð¾.")
         return
     set_subscription_price(new_price)
     await msg.answer(
-        f"✅ Цена подписки обновлена: <b>{new_price} ⭐ Stars / месяц</b>",
+        f"â Ð¦ÐµÐ½Ð° Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð°: <b>{new_price} â­ Stars / Ð¼ÐµÑÑÑ</b>",
         reply_markup=_admin_kb(),
         parse_mode="HTML",
     )
 
 
-# ── Выдать trial вручную ──────────────────────────────────────────────────────
+# ââ ÐÑÐ´Ð°ÑÑ trial Ð²ÑÑÑÐ½ÑÑ ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "admin_grant_trial")
 async def cb_admin_grant_trial(cb: CallbackQuery, state: FSMContext) -> None:
     if cb.from_user.id not in ADMIN_IDS:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("ÐÐµÑ Ð´Ð¾ÑÑÑÐ¿Ð°", show_alert=True)
         return
     await state.set_state(AdminState.waiting_grant_user_id)
     await cb.message.edit_text(
-        "🎁 <b>Выдать пробный период</b>\n\n"
-        "Введите <b>user_id</b> пользователя (можно узнать командой /id у пользователя).\n\n"
-        "Формат: <code>123456789</code>\n"
-        "Или с указанием часов: <code>123456789 48</code> (48 часов)",
+        "ð <b>ÐÑÐ´Ð°ÑÑ Ð¿ÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´</b>\n\n"
+        "ÐÐ²ÐµÐ´Ð¸ÑÐµ <b>user_id</b> Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ (Ð¼Ð¾Ð¶Ð½Ð¾ ÑÐ·Ð½Ð°ÑÑ ÐºÐ¾Ð¼Ð°Ð½Ð´Ð¾Ð¹ /id Ñ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ).\n\n"
+        "Ð¤Ð¾ÑÐ¼Ð°Ñ: <code>123456789</code>\n"
+        "ÐÐ»Ð¸ Ñ ÑÐºÐ°Ð·Ð°Ð½Ð¸ÐµÐ¼ ÑÐ°ÑÐ¾Ð²: <code>123456789 48</code> (48 ÑÐ°ÑÐ¾Ð²)",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data="admin_panel")]
+            [InlineKeyboardButton(text="âï¸ ÐÑÐ¼ÐµÐ½Ð°", callback_data="admin_panel")]
         ]),
         parse_mode="HTML",
     )
@@ -552,76 +552,76 @@ async def handle_grant_user_id(msg: Message, state: FSMContext, bot: Bot) -> Non
         assert hours >= 1
     except (ValueError, IndexError, AssertionError):
         await msg.answer(
-            "❌ Неверный формат. Пример: <code>123456789</code> или <code>123456789 48</code>",
+            "â ÐÐµÐ²ÐµÑÐ½ÑÐ¹ ÑÐ¾ÑÐ¼Ð°Ñ. ÐÑÐ¸Ð¼ÐµÑ: <code>123456789</code> Ð¸Ð»Ð¸ <code>123456789 48</code>",
             parse_mode="HTML",
         )
         return
 
     grant_trial(target_id, hours=hours)
 
-    # Уведомляем пользователя
+    # Ð£Ð²ÐµÐ´Ð¾Ð¼Ð»ÑÐµÐ¼ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ
     try:
         await bot.send_message(
             target_id,
-            f"🎁 <b>Вам выдан пробный период на {hours} ч!</b>\n\n"
-            "Теперь вы будете получать алерты об аномалиях на бирже.",
+            f"ð <b>ÐÐ°Ð¼ Ð²ÑÐ´Ð°Ð½ Ð¿ÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð½Ð° {hours} Ñ!</b>\n\n"
+            "Ð¢ÐµÐ¿ÐµÑÑ Ð²Ñ Ð±ÑÐ´ÐµÑÐµ Ð¿Ð¾Ð»ÑÑÐ°ÑÑ Ð°Ð»ÐµÑÑÑ Ð¾Ð± Ð°Ð½Ð¾Ð¼Ð°Ð»Ð¸ÑÑ Ð½Ð° Ð±Ð¸ÑÐ¶Ðµ.",
             parse_mode="HTML",
         )
-        notified = "✉️ Пользователь уведомлён."
+        notified = "âï¸ ÐÐ¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ ÑÐ²ÐµÐ´Ð¾Ð¼Ð»ÑÐ½."
     except Exception:
-        notified = "⚠️ Не удалось уведомить пользователя (возможно, заблокировал бота)."
+        notified = "â ï¸ ÐÐµ ÑÐ´Ð°Ð»Ð¾ÑÑ ÑÐ²ÐµÐ´Ð¾Ð¼Ð¸ÑÑ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ (Ð²Ð¾Ð·Ð¼Ð¾Ð¶Ð½Ð¾, Ð·Ð°Ð±Ð»Ð¾ÐºÐ¸ÑÐ¾Ð²Ð°Ð» Ð±Ð¾ÑÐ°)."
 
     await msg.answer(
-        f"✅ Пробный период на <b>{hours} ч</b> выдан пользователю <code>{target_id}</code>.\n{notified}",
+        f"â ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð½Ð° <b>{hours} Ñ</b> Ð²ÑÐ´Ð°Ð½ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ <code>{target_id}</code>.\n{notified}",
         reply_markup=_admin_kb(),
         parse_mode="HTML",
     )
 
 
-# ── Список пользователей ──────────────────────────────────────────────────────
+# ââ Ð¡Ð¿Ð¸ÑÐ¾Ðº Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»ÐµÐ¹ ââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "admin_users")
 async def cb_admin_users(cb: CallbackQuery) -> None:
     if cb.from_user.id not in ADMIN_IDS:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("ÐÐµÑ Ð´Ð¾ÑÑÑÐ¿Ð°", show_alert=True)
         return
     users = get_all_users()
     if not users:
-        text = "👥 Пользователей пока нет."
+        text = "ð¥ ÐÐ¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»ÐµÐ¹ Ð¿Ð¾ÐºÐ° Ð½ÐµÑ."
     else:
-        lines = ["👥 <b>Последние пользователи</b>\n"]
+        lines = ["ð¥ <b>ÐÐ¾ÑÐ»ÐµÐ´Ð½Ð¸Ðµ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ð¸</b>\n"]
         for u in users[:30]:
-            name = u.get("first_name") or u.get("username") or "—"
+            name = u.get("first_name") or u.get("username") or "â"
             uid = u["user_id"]
             sub = u.get("sub_type")
             if sub:
                 exp = u["expires_at"].strftime("%d.%m") if u["expires_at"] else "?"
-                sub_str = f"{'🎁' if sub == 'trial' else '💎'} до {exp}"
+                sub_str = f"{'ð' if sub == 'trial' else 'ð'} Ð´Ð¾ {exp}"
             else:
-                sub_str = "❌ нет"
-            lines.append(f"<code>{uid}</code> {name} — {sub_str}")
+                sub_str = "â Ð½ÐµÑ"
+            lines.append(f"<code>{uid}</code> {name} â {sub_str}")
         text = "\n".join(lines)
     await cb.message.edit_text(
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_panel")]
+            [InlineKeyboardButton(text="âï¸ ÐÐ°Ð·Ð°Ð´", callback_data="admin_panel")]
         ]),
         parse_mode="HTML",
     )
     await cb.answer()
 
 
-# ── Рассылка ──────────────────────────────────────────────────────────────────
+# ââ Ð Ð°ÑÑÑÐ»ÐºÐ° ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.callback_query(F.data == "admin_broadcast")
 async def cb_admin_broadcast_prompt(cb: CallbackQuery, state: FSMContext) -> None:
     if cb.from_user.id not in ADMIN_IDS:
-        await cb.answer("Нет доступа", show_alert=True)
+        await cb.answer("ÐÐµÑ Ð´Ð¾ÑÑÑÐ¿Ð°", show_alert=True)
         return
     await cb.message.edit_text(
-        "📢 <b>Рассылка</b>\n\nОтправьте текст сообщения (HTML разрешён):",
+        "ð¢ <b>Ð Ð°ÑÑÑÐ»ÐºÐ°</b>\n\nÐÑÐ¿ÑÐ°Ð²ÑÑÐµ ÑÐµÐºÑÑ ÑÐ¾Ð¾Ð±ÑÐµÐ½Ð¸Ñ (HTML ÑÐ°Ð·ÑÐµÑÑÐ½):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Отмена", callback_data="admin_panel")]
+            [InlineKeyboardButton(text="âï¸ ÐÑÐ¼ÐµÐ½Ð°", callback_data="admin_panel")]
         ]),
         parse_mode="HTML",
     )
@@ -635,7 +635,7 @@ async def cmd_broadcast(msg: Message, bot: Bot) -> None:
         return
     text = msg.text.removeprefix("/broadcast").strip()
     if not text:
-        await msg.answer("Использование: /broadcast <текст>")
+        await msg.answer("ÐÑÐ¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°Ð½Ð¸Ðµ: /broadcast <ÑÐµÐºÑÑ>")
         return
     from database.db import get_all_active_user_ids
     user_ids = get_all_active_user_ids()
@@ -646,29 +646,29 @@ async def cmd_broadcast(msg: Message, bot: Bot) -> None:
             sent += 1
         except Exception:
             pass
-    await msg.answer(f"✅ Рассылка отправлена {sent} пользователям.")
+    await msg.answer(f"â Ð Ð°ÑÑÑÐ»ÐºÐ° Ð¾ÑÐ¿ÑÐ°Ð²Ð»ÐµÐ½Ð° {sent} Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»ÑÐ¼.")
 
 
-# ── /id — узнать свой user_id ─────────────────────────────────────────────────
+# ââ /id â ÑÐ·Ð½Ð°ÑÑ ÑÐ²Ð¾Ð¹ user_id âââââââââââââââââââââââââââââââââââââââââââââââââ
 
 @router.message(Command("id"))
 async def cmd_id(msg: Message) -> None:
-    await msg.answer(f"Ваш Telegram ID: <code>{msg.from_user.id}</code>", parse_mode="HTML")
+    await msg.answer(f"ÐÐ°Ñ Telegram ID: <code>{msg.from_user.id}</code>", parse_mode="HTML")
 
 
-# ─── ЮKassa: оплата картой / СБП ─────────────────────────────────────────────
+# âââ Ð®Kassa: Ð¾Ð¿Ð»Ð°ÑÐ° ÐºÐ°ÑÑÐ¾Ð¹ / Ð¡ÐÐ âââââââââââââââââââââââââââââââââââââââââââââ
 
 def _yukassa_plans_kb() -> InlineKeyboardMarkup:
-    """Клавиатура выбора тарифа ЮKassa."""
+    """ÐÐ»Ð°Ð²Ð¸Ð°ÑÑÑÐ° Ð²ÑÐ±Ð¾ÑÐ° ÑÐ°ÑÐ¸ÑÐ° Ð®Kassa."""
     try:
         from bot.payments_yukassa import PLANS
         buttons = []
         for key, plan in PLANS.items():
             buttons.append([InlineKeyboardButton(
-                text=f"💳 {plan['label']} — {plan['price']} ₽",
+                text=f"ð³ {plan['label']} â {plan['price']} â½",
                 callback_data=f"yk_plan:{key}",
             )])
-        buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="buy")])
+        buttons.append([InlineKeyboardButton(text="ð ÐÐ°Ð·Ð°Ð´", callback_data="buy")])
         return InlineKeyboardMarkup(inline_keyboard=buttons)
     except ImportError:
         return back_kb("buy")
@@ -676,24 +676,24 @@ def _yukassa_plans_kb() -> InlineKeyboardMarkup:
 
 @router.callback_query(F.data == "pay_yukassa")
 async def cb_pay_yukassa(cb: CallbackQuery) -> None:
-    """Показывает тарифы ЮKassa."""
+    """ÐÐ¾ÐºÐ°Ð·ÑÐ²Ð°ÐµÑ ÑÐ°ÑÐ¸ÑÑ Ð®Kassa."""
     try:
         from bot.payments_yukassa import YUKASSA_AVAILABLE
         if not YUKASSA_AVAILABLE:
             await cb.answer(
-                "Оплата картой временно недоступна. Используйте Telegram Stars.",
+                "ÐÐ¿Ð»Ð°ÑÐ° ÐºÐ°ÑÑÐ¾Ð¹ Ð²ÑÐµÐ¼ÐµÐ½Ð½Ð¾ Ð½ÐµÐ´Ð¾ÑÑÑÐ¿Ð½Ð°. ÐÑÐ¿Ð¾Ð»ÑÐ·ÑÐ¹ÑÐµ Telegram Stars.",
                 show_alert=True,
             )
             return
     except ImportError:
-        await cb.answer("Оплата картой недоступна.", show_alert=True)
+        await cb.answer("ÐÐ¿Ð»Ð°ÑÐ° ÐºÐ°ÑÑÐ¾Ð¹ Ð½ÐµÐ´Ð¾ÑÑÑÐ¿Ð½Ð°.", show_alert=True)
         return
 
     await cb.message.edit_text(
-        "💳 <b>Оплата картой / СБП</b>\n\n"
-        "Выберите тариф:\n\n"
-        "✅ Оплата через банковскую карту или СБП\n"
-        "🔒 Безопасная оплата через ЮKassa",
+        "ð³ <b>ÐÐ¿Ð»Ð°ÑÐ° ÐºÐ°ÑÑÐ¾Ð¹ / Ð¡ÐÐ</b>\n\n"
+        "ÐÑÐ±ÐµÑÐ¸ÑÐµ ÑÐ°ÑÐ¸Ñ:\n\n"
+        "â ÐÐ¿Ð»Ð°ÑÐ° ÑÐµÑÐµÐ· Ð±Ð°Ð½ÐºÐ¾Ð²ÑÐºÑÑ ÐºÐ°ÑÑÑ Ð¸Ð»Ð¸ Ð¡ÐÐ\n"
+        "ð ÐÐµÐ·Ð¾Ð¿Ð°ÑÐ½Ð°Ñ Ð¾Ð¿Ð»Ð°ÑÐ° ÑÐµÑÐµÐ· Ð®Kassa",
         reply_markup=_yukassa_plans_kb(),
         parse_mode="HTML",
     )
@@ -702,46 +702,46 @@ async def cb_pay_yukassa(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("yk_plan:"))
 async def cb_yukassa_plan(cb: CallbackQuery) -> None:
-    """Создаёт платёж ЮKassa для выбранного тарифа."""
+    """Ð¡Ð¾Ð·Ð´Ð°ÑÑ Ð¿Ð»Ð°ÑÑÐ¶ Ð®Kassa Ð´Ð»Ñ Ð²ÑÐ±ÑÐ°Ð½Ð½Ð¾Ð³Ð¾ ÑÐ°ÑÐ¸ÑÐ°."""
     plan_key = cb.data.split(":", 1)[1]
     try:
         from bot.payments_yukassa import PLANS, create_payment
     except ImportError:
-        await cb.answer("Оплата недоступна.", show_alert=True)
+        await cb.answer("ÐÐ¿Ð»Ð°ÑÐ° Ð½ÐµÐ´Ð¾ÑÑÑÐ¿Ð½Ð°.", show_alert=True)
         return
 
     plan = PLANS.get(plan_key)
     if not plan:
-        await cb.answer("Неизвестный тариф.", show_alert=True)
+        await cb.answer("ÐÐµÐ¸Ð·Ð²ÐµÑÑÐ½ÑÐ¹ ÑÐ°ÑÐ¸Ñ.", show_alert=True)
         return
 
-    await cb.answer("Создаём ссылку на оплату...", show_alert=False)
+    await cb.answer("Ð¡Ð¾Ð·Ð´Ð°ÑÐ¼ ÑÑÑÐ»ÐºÑ Ð½Ð° Ð¾Ð¿Ð»Ð°ÑÑ...", show_alert=False)
 
-    # return_url — ссылка на бота (пользователь вернётся сюда после оплаты)
+    # return_url â ÑÑÑÐ»ÐºÐ° Ð½Ð° Ð±Ð¾ÑÐ° (Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ Ð²ÐµÑÐ½ÑÑÑÑ ÑÑÐ´Ð° Ð¿Ð¾ÑÐ»Ðµ Ð¾Ð¿Ð»Ð°ÑÑ)
     return_url = f"https://t.me/{(await cb.bot.get_me()).username}"
     result = await create_payment(cb.from_user.id, plan_key, return_url)
 
     if not result:
         await cb.message.edit_text(
-            "❌ Не удалось создать платёж. Попробуйте позже или оплатите через Telegram Stars.",
+            "â ÐÐµ ÑÐ´Ð°Ð»Ð¾ÑÑ ÑÐ¾Ð·Ð´Ð°ÑÑ Ð¿Ð»Ð°ÑÑÐ¶. ÐÐ¾Ð¿ÑÐ¾Ð±ÑÐ¹ÑÐµ Ð¿Ð¾Ð·Ð¶Ðµ Ð¸Ð»Ð¸ Ð¾Ð¿Ð»Ð°ÑÐ¸ÑÐµ ÑÐµÑÐµÐ· Telegram Stars.",
             reply_markup=back_kb("buy"),
         )
         return
 
     pay_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"💳 Оплатить {plan['price']} ₽",
+            text=f"ð³ ÐÐ¿Ð»Ð°ÑÐ¸ÑÑ {plan['price']} â½",
             url=result["confirmation_url"],
         )],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="buy")],
+        [InlineKeyboardButton(text="ð ÐÐ°Ð·Ð°Ð´", callback_data="buy")],
     ])
 
     await cb.message.edit_text(
-        f"💳 <b>Оплата через ЮKassa</b>\n\n"
-        f"Тариф: <b>{plan['label']}</b>\n"
-        f"Сумма: <b>{plan['price']} ₽</b>\n\n"
-        "Нажмите кнопку ниже для перехода к оплате.\n"
-        "После оплаты подписка активируется автоматически.",
+        f"ð³ <b>ÐÐ¿Ð»Ð°ÑÐ° ÑÐµÑÐµÐ· Ð®Kassa</b>\n\n"
+        f"Ð¢Ð°ÑÐ¸Ñ: <b>{plan['label']}</b>\n"
+        f"Ð¡ÑÐ¼Ð¼Ð°: <b>{plan['price']} â½</b>\n\n"
+        "ÐÐ°Ð¶Ð¼Ð¸ÑÐµ ÐºÐ½Ð¾Ð¿ÐºÑ Ð½Ð¸Ð¶Ðµ Ð´Ð»Ñ Ð¿ÐµÑÐµÑÐ¾Ð´Ð° Ðº Ð¾Ð¿Ð»Ð°ÑÐµ.\n"
+        "ÐÐ¾ÑÐ»Ðµ Ð¾Ð¿Ð»Ð°ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ° Ð°ÐºÑÐ¸Ð²Ð¸ÑÑÐµÑÑÑ Ð°Ð²ÑÐ¾Ð¼Ð°ÑÐ¸ÑÐµÑÐºÐ¸.",
         reply_markup=pay_kb,
         parse_mode="HTML",
     )
@@ -749,38 +749,38 @@ async def cb_yukassa_plan(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "trial_yukassa")
 async def cb_trial_yukassa(cb: CallbackQuery) -> None:
-    """Активирует пробный период (ЮKassa вариант)."""
+    """ÐÐºÑÐ¸Ð²Ð¸ÑÑÐµÑ Ð¿ÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ (Ð®Kassa Ð²Ð°ÑÐ¸Ð°Ð½Ñ)."""
     try:
         from bot.payments_yukassa import activate_trial, is_subscribed, TRIAL_DAYS
     except ImportError:
-        await cb.answer("Пробный период недоступен.", show_alert=True)
+        await cb.answer("ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð½ÐµÐ´Ð¾ÑÑÑÐ¿ÐµÐ½.", show_alert=True)
         return
 
     uid = cb.from_user.id
     if is_subscribed(uid):
-        await cb.answer("У вас уже есть активная подписка!", show_alert=True)
+        await cb.answer("Ð£ Ð²Ð°Ñ ÑÐ¶Ðµ ÐµÑÑÑ Ð°ÐºÑÐ¸Ð²Ð½Ð°Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ°!", show_alert=True)
         return
 
     ok = activate_trial(uid)
     if ok:
         await cb.message.edit_text(
-            f"🎉 <b>Пробный период на {TRIAL_DAYS} дней активирован!</b>\n\n"
-            "Вы будете получать все алерты об аномалиях на бирже.\n"
-            "После окончания периода оформите подписку командой /subscribe.",
+            f"ð <b>ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð½Ð° {TRIAL_DAYS} Ð´Ð½ÐµÐ¹ Ð°ÐºÑÐ¸Ð²Ð¸ÑÐ¾Ð²Ð°Ð½!</b>\n\n"
+            "ÐÑ Ð±ÑÐ´ÐµÑÐµ Ð¿Ð¾Ð»ÑÑÐ°ÑÑ Ð²ÑÐµ Ð°Ð»ÐµÑÑÑ Ð¾Ð± Ð°Ð½Ð¾Ð¼Ð°Ð»Ð¸ÑÑ Ð½Ð° Ð±Ð¸ÑÐ¶Ðµ.\n"
+            "ÐÐ¾ÑÐ»Ðµ Ð¾ÐºÐ¾Ð½ÑÐ°Ð½Ð¸Ñ Ð¿ÐµÑÐ¸Ð¾Ð´Ð° Ð¾ÑÐ¾ÑÐ¼Ð¸ÑÐµ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ ÐºÐ¾Ð¼Ð°Ð½Ð´Ð¾Ð¹ /subscribe.",
             reply_markup=back_kb(),
             parse_mode="HTML",
         )
-        await cb.answer("Пробный период активирован!")
+        await cb.answer("ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ Ð°ÐºÑÐ¸Ð²Ð¸ÑÐ¾Ð²Ð°Ð½!")
     else:
         await cb.answer(
-            "Пробный период уже был использован. Оформите платную подписку.",
+            "ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ ÑÐ¶Ðµ Ð±ÑÐ» Ð¸ÑÐ¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°Ð½. ÐÑÐ¾ÑÐ¼Ð¸ÑÐµ Ð¿Ð»Ð°ÑÐ½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ.",
             show_alert=True,
         )
 
 
 @router.message(Command("subscribe"))
 async def cmd_subscribe(msg: Message) -> None:
-    """Показывает меню подписки."""
+    """ÐÐ¾ÐºÐ°Ð·ÑÐ²Ð°ÐµÑ Ð¼ÐµÐ½Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸."""
     try:
         from bot.payments_yukassa import get_subscription, TRIAL_DAYS, YUKASSA_AVAILABLE
         sub = get_subscription(msg.from_user.id)
@@ -792,30 +792,30 @@ async def cmd_subscribe(msg: Message) -> None:
     if sub and sub["is_active"]:
         exp = sub["expires_at"].strftime("%d.%m.%Y")
         plan = sub.get("plan", "")
-        trial_note = " (пробный)" if sub.get("is_trial") else ""
+        trial_note = " (Ð¿ÑÐ¾Ð±Ð½ÑÐ¹)" if sub.get("is_trial") else ""
         text = (
-            f"✅ <b>Подписка активна{trial_note}</b>\n\n"
-            f"Тариф: {plan}\n"
-            f"Действует до: <b>{exp}</b> ({sub['days_left']} дн.)\n\n"
-            "Для продления используйте кнопку ниже."
+            f"â <b>ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° Ð°ÐºÑÐ¸Ð²Ð½Ð°{trial_note}</b>\n\n"
+            f"Ð¢Ð°ÑÐ¸Ñ: {plan}\n"
+            f"ÐÐµÐ¹ÑÑÐ²ÑÐµÑ Ð´Ð¾: <b>{exp}</b> ({sub['days_left']} Ð´Ð½.)\n\n"
+            "ÐÐ»Ñ Ð¿ÑÐ¾Ð´Ð»ÐµÐ½Ð¸Ñ Ð¸ÑÐ¿Ð¾Ð»ÑÐ·ÑÐ¹ÑÐµ ÐºÐ½Ð¾Ð¿ÐºÑ Ð½Ð¸Ð¶Ðµ."
         )
     else:
         text = (
-            "📱 <b>Подписка AnomalyAlert</b>\n\n"
-            "Получайте алерты об аномалиях на Московской бирже.\n\n"
-            "Выберите способ оплаты:"
+            "ð± <b>ÐÐ¾Ð´Ð¿Ð¸ÑÐºÐ° AnomalyAlert</b>\n\n"
+            "ÐÐ¾Ð»ÑÑÐ°Ð¹ÑÐµ Ð°Ð»ÐµÑÑÑ Ð¾Ð± Ð°Ð½Ð¾Ð¼Ð°Ð»Ð¸ÑÑ Ð½Ð° ÐÐ¾ÑÐºÐ¾Ð²ÑÐºÐ¾Ð¹ Ð±Ð¸ÑÐ¶Ðµ.\n\n"
+            "ÐÑÐ±ÐµÑÐ¸ÑÐµ ÑÐ¿Ð¾ÑÐ¾Ð± Ð¾Ð¿Ð»Ð°ÑÑ:"
         )
 
     buttons = []
     if yukassa_btn:
-        buttons.append([InlineKeyboardButton(text="💳 Оплатить картой / СБП", callback_data="pay_yukassa")])
-    buttons.append([InlineKeyboardButton(text="⭐ Оплатить Telegram Stars", callback_data="pay_stars")])
+        buttons.append([InlineKeyboardButton(text="ð³ ÐÐ¿Ð»Ð°ÑÐ¸ÑÑ ÐºÐ°ÑÑÐ¾Ð¹ / Ð¡ÐÐ", callback_data="pay_yukassa")])
+    buttons.append([InlineKeyboardButton(text="â­ ÐÐ¿Ð»Ð°ÑÐ¸ÑÑ Telegram Stars", callback_data="pay_stars")])
     if not sub:
         buttons.append([InlineKeyboardButton(
-            text=f"🎁 Пробный период ({TRIAL_DAYS} дней)",
+            text=f"ð ÐÑÐ¾Ð±Ð½ÑÐ¹ Ð¿ÐµÑÐ¸Ð¾Ð´ ({TRIAL_DAYS} Ð´Ð½ÐµÐ¹)",
             callback_data="trial_yukassa" if yukassa_btn else "trial",
         )])
-    buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")])
+    buttons.append([InlineKeyboardButton(text="ð ÐÐ»Ð°Ð²Ð½Ð¾Ðµ Ð¼ÐµÐ½Ñ", callback_data="main_menu")])
 
     await msg.answer(
         text,
