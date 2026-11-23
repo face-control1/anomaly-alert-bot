@@ -7,6 +7,9 @@ from datetime import datetime, timedelta, timezone
 from contextlib import contextmanager
 from config import DB_PATH, SUBSCRIPTION_PERIOD_DAYS, TRIAL_PERIOD_HOURS
 
+# Московский часовой пояс (UTC+3)
+MSK = timezone(timedelta(hours=3))
+
 os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else ".", exist_ok=True)
 
 
@@ -125,13 +128,14 @@ def get_subscription_info(user_id: int) -> dict | None:
     if row:
         return {
             "type": row["type"],
-            "started_at": datetime.fromtimestamp(row["started_at"], tz=timezone.utc),
-            "expires_at": datetime.fromtimestamp(row["expires_at"], tz=timezone.utc),
+            "started_at": datetime.fromtimestamp(row["started_at"], tz=MSK),
+            "expires_at": datetime.fromtimestamp(row["expires_at"], tz=MSK),
         }
     return None
 
 
 def had_trial(user_id: int) -> bool:
+    """Вернуть True если пользователь КОГДА-ЛИБО получал триал (включая истёкший)."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT 1 FROM subscriptions WHERE user_id=? AND type='trial' LIMIT 1",
@@ -140,7 +144,10 @@ def had_trial(user_id: int) -> bool:
     return row is not None
 
 
-def activate_trial(user_id: int) -> None:
+def activate_trial(user_id: int) -> bool:
+    """Активировать триал. Вернуть False если триал уже был."""
+    if had_trial(user_id):
+        return False
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=TRIAL_PERIOD_HOURS)
     with get_conn() as conn:
@@ -148,6 +155,7 @@ def activate_trial(user_id: int) -> None:
             INSERT INTO subscriptions (user_id, type, started_at, expires_at)
             VALUES (?, 'trial', ?, ?)
         """, (user_id, now.timestamp(), expires.timestamp()))
+    return True
 
 
 def activate_paid(user_id: int, payment_id: str, stars: int) -> None:
@@ -296,7 +304,7 @@ def set_subscription_price(stars: int) -> None:
 # ─── Ручная выдача пробного периода ──────────────────────────────────────────
 
 def grant_trial(user_id: int, hours: int = 24) -> None:
-    """Выдать пробный период вручную (даже если уже был trial)."""
+    """Выдать пробный период вручную (даже если уже был trial — только для админа)."""
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=hours)
     with get_conn() as conn:
@@ -330,7 +338,7 @@ def get_all_users() -> list[dict]:
             "username": r["username"],
             "first_name": r["first_name"],
             "sub_type": r["sub_type"],
-            "expires_at": datetime.fromtimestamp(r["expires_at"], tz=timezone.utc) if r["expires_at"] else None,
+            "expires_at": datetime.fromtimestamp(r["expires_at"], tz=MSK) if r["expires_at"] else None,
         })
     return result
 
