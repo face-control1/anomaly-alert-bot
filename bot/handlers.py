@@ -88,14 +88,6 @@ async def cb_main_menu(cb: CallbackQuery) -> None:
         "Главное меню — выбери действие:",
         reply_markup=main_menu_kb(),
     )
-    await cb.answer()более чем на 3% за минуту\n"
-        "📈📉 <b>Полосы Боллинджера</b> — цена вышла за 2.5σ от скользящей средней\n\n"
-        "Мониторинг: топ-15 акций ММВБ + ваши персональные тикеры.\n\n"
-        "💰 Стоимость: <b>250 ⭐ Stars / месяц</b>\n"
-        "🎁 Пробный период: <b>24 часа бесплатно</b>",
-        reply_markup=back_kb(),
-        parse_mode="HTML",
-    )
     await cb.answer()
 
 
@@ -166,8 +158,6 @@ async def cb_buy(cb: CallbackQuery) -> None:
         f"📊 Топ-15 акций ММВБ + персональные тикеры{extra}",
         reply_markup=buy_menu_kb(),
         parse_mode="HTML",
-    )
-    await cb.answer()HTML",
     )
     await cb.answer()
 
