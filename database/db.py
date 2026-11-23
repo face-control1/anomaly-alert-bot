@@ -1,5 +1,5 @@
 """
-database/db.py â ÑÐ½Ð¸Ð²ÐµÑÑÐ°Ð»ÑÐ½Ð°Ñ Ð¾Ð±ÑÑÑÐºÐ°: PostgreSQL (ÐµÑÐ»Ð¸ DATABASE_URL) Ð¸Ð»Ð¸ SQLite
+database/db.py Ã¢ÂÂ ÃÂÃÂ½ÃÂ¸ÃÂ²ÃÂµÃÂÃÂÃÂ°ÃÂ»ÃÂÃÂ½ÃÂ°ÃÂ ÃÂ¾ÃÂ±ÃÂÃÂÃÂÃÂºÃÂ°: PostgreSQL (ÃÂµÃÂÃÂ»ÃÂ¸ DATABASE_URL) ÃÂ¸ÃÂ»ÃÂ¸ SQLite
 """
 
 import os
@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
 
-# ÐÐ¾ÑÐºÐ¾Ð²ÑÐºÐ¸Ð¹ ÑÐ°ÑÐ¾Ð²Ð¾Ð¹ Ð¿Ð¾ÑÑ (UTC+3)
+# ÃÂÃÂ¾ÃÂÃÂºÃÂ¾ÃÂ²ÃÂÃÂºÃÂ¸ÃÂ¹ ÃÂÃÂ°ÃÂÃÂ¾ÃÂ²ÃÂ¾ÃÂ¹ ÃÂ¿ÃÂ¾ÃÂÃÂ (UTC+3)
 MSK = timezone(timedelta(hours=3))
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -35,7 +35,7 @@ if USE_POSTGRES:
         finally:
             conn.close()
 
-    PH = "%s"  # placeholder Ð´Ð»Ñ PostgreSQL
+    PH = "%s"  # placeholder ÃÂ´ÃÂ»ÃÂ PostgreSQL
 
 else:
     import sqlite3
@@ -55,11 +55,11 @@ else:
         finally:
             conn.close()
 
-    PH = "?"  # placeholder Ð´Ð»Ñ SQLite
+    PH = "?"  # placeholder ÃÂ´ÃÂ»ÃÂ SQLite
 
 
 def init_db() -> None:
-    """Ð¡Ð¾Ð·Ð´Ð°ÑÑ ÑÐ°Ð±Ð»Ð¸ÑÑ ÐµÑÐ»Ð¸ Ð½Ðµ ÑÑÑÐµÑÑÐ²ÑÑÑ."""
+    """ÃÂ¡ÃÂ¾ÃÂ·ÃÂ´ÃÂ°ÃÂÃÂ ÃÂÃÂ°ÃÂ±ÃÂ»ÃÂ¸ÃÂÃÂ ÃÂµÃÂÃÂ»ÃÂ¸ ÃÂ½ÃÂµ ÃÂÃÂÃÂÃÂµÃÂÃÂÃÂ²ÃÂÃÂÃÂ."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
@@ -67,11 +67,16 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS users (
                     user_id     BIGINT PRIMARY KEY,
                     username    TEXT,
+                    first_name  TEXT,
                     created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
                 )
             """)
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS subscriptions (
+                            try:
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT")
+            except Exception:
+                pass
+            CREATE TABLE IF NOT EXISTS subscriptions (
                     id          SERIAL PRIMARY KEY,
                     user_id     BIGINT NOT NULL REFERENCES users(user_id),
                     type        TEXT NOT NULL,
@@ -148,7 +153,7 @@ def init_db() -> None:
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
 
 
-def ensure_user(user_id: int, username: str | None = None) -> None:
+def ensure_user(user_id: int, username: str | None = None, first_name: str | None = None) -> None:
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
@@ -160,9 +165,9 @@ def ensure_user(user_id: int, username: str | None = None) -> None:
             cur.close()
         else:
             conn.execute(
-                "INSERT INTO users (user_id, username) VALUES (?, ?) "
-                "ON CONFLICT (user_id) DO UPDATE SET username = excluded.username",
-                (user_id, username)
+                "INSERT INTO users (user_id, username, first_name) VALUES (?, ?, ?) "
+                "ON CONFLICT (user_id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name",
+                (user_id, username, first_name)
             )
 
 
@@ -186,7 +191,7 @@ def had_trial(user_id: int) -> bool:
 
 
 def activate_trial(user_id: int) -> bool:
-    """ÐÐºÑÐ¸Ð²Ð¸ÑÐ¾Ð²Ð°ÑÑ ÑÑÐ¸Ð°Ð». ÐÐµÑÐ½ÑÑÑ False ÐµÑÐ»Ð¸ ÑÑÐ¸Ð°Ð» ÑÐ¶Ðµ Ð±ÑÐ»."""
+    """ÃÂÃÂºÃÂÃÂ¸ÃÂ²ÃÂ¸ÃÂÃÂ¾ÃÂ²ÃÂ°ÃÂÃÂ ÃÂÃÂÃÂ¸ÃÂ°ÃÂ». ÃÂÃÂµÃÂÃÂ½ÃÂÃÂÃÂ False ÃÂµÃÂÃÂ»ÃÂ¸ ÃÂÃÂÃÂ¸ÃÂ°ÃÂ» ÃÂÃÂ¶ÃÂµ ÃÂ±ÃÂÃÂ»."""
     if had_trial(user_id):
         return False
     now = datetime.now(timezone.utc)
@@ -210,7 +215,7 @@ def activate_trial(user_id: int) -> bool:
 
 
 def get_subscription_info(user_id: int) -> dict | None:
-    """ÐÐµÑÐ½ÑÑÑ Ð°ÐºÑÐ¸Ð²Ð½ÑÑ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÑ Ð¸Ð»Ð¸ None."""
+    """ÃÂÃÂµÃÂÃÂ½ÃÂÃÂÃÂ ÃÂ°ÃÂºÃÂÃÂ¸ÃÂ²ÃÂ½ÃÂÃÂ ÃÂ¿ÃÂ¾ÃÂ´ÃÂ¿ÃÂ¸ÃÂÃÂºÃÂ ÃÂ¸ÃÂ»ÃÂ¸ None."""
     now_ts = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         if USE_POSTGRES:
@@ -269,7 +274,7 @@ def add_subscription(user_id: int, months: int = 1) -> None:
 
 
 def get_all_active_user_ids() -> list[int]:
-    """ÐÐµÑÐ½ÑÑÑ ÑÐ¿Ð¸ÑÐ¾Ðº user_id Ñ ÐºÐ¾Ð³Ð¾ ÐµÑÑÑ Ð°ÐºÑÐ¸Ð²Ð½Ð°Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ° (Ð´Ð»Ñ ÑÐ°ÑÑÑÐ»ÐºÐ¸ Ð°Ð»ÐµÑÑÐ¾Ð²)."""
+    """ÃÂÃÂµÃÂÃÂ½ÃÂÃÂÃÂ ÃÂÃÂ¿ÃÂ¸ÃÂÃÂ¾ÃÂº user_id ÃÂ ÃÂºÃÂ¾ÃÂ³ÃÂ¾ ÃÂµÃÂÃÂÃÂ ÃÂ°ÃÂºÃÂÃÂ¸ÃÂ²ÃÂ½ÃÂ°ÃÂ ÃÂ¿ÃÂ¾ÃÂ´ÃÂ¿ÃÂ¸ÃÂÃÂºÃÂ° (ÃÂ´ÃÂ»ÃÂ ÃÂÃÂ°ÃÂÃÂÃÂÃÂ»ÃÂºÃÂ¸ ÃÂ°ÃÂ»ÃÂµÃÂÃÂÃÂ¾ÃÂ²)."""
     now_ts = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         if USE_POSTGRES:
@@ -289,7 +294,7 @@ def get_all_active_user_ids() -> list[int]:
 
 
 def log_alert(ticker: str, exchange: str, alert_type: str, headline: str | None = None) -> None:
-    """ÐÐ°Ð¿Ð¸ÑÐ°ÑÑ Ð°Ð»ÐµÑÑ Ð² Ð»Ð¾Ð³ (Ð´Ð»Ñ ÑÑÐ°ÑÐ¸ÑÑÐ¸ÐºÐ¸ /admin)."""
+    """ÃÂÃÂ°ÃÂ¿ÃÂ¸ÃÂÃÂ°ÃÂÃÂ ÃÂ°ÃÂ»ÃÂµÃÂÃÂ ÃÂ² ÃÂ»ÃÂ¾ÃÂ³ (ÃÂ´ÃÂ»ÃÂ ÃÂÃÂÃÂ°ÃÂÃÂ¸ÃÂÃÂÃÂ¸ÃÂºÃÂ¸ /admin)."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
@@ -307,7 +312,7 @@ def log_alert(ticker: str, exchange: str, alert_type: str, headline: str | None 
 
 
 def get_favorites(user_id: int) -> list[dict]:
-    """ÐÐµÑÐ½ÑÑÑ Ð¸Ð·Ð±ÑÐ°Ð½Ð½ÑÐµ ÑÐ¸ÐºÐµÑÑ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ: [{"ticker": ..., "exchange": ...}]."""
+    """ÃÂÃÂµÃÂÃÂ½ÃÂÃÂÃÂ ÃÂ¸ÃÂ·ÃÂ±ÃÂÃÂ°ÃÂ½ÃÂ½ÃÂÃÂµ ÃÂÃÂ¸ÃÂºÃÂµÃÂÃÂ ÃÂ¿ÃÂ¾ÃÂ»ÃÂÃÂ·ÃÂ¾ÃÂ²ÃÂ°ÃÂÃÂµÃÂ»ÃÂ: [{"ticker": ..., "exchange": ...}]."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
@@ -416,27 +421,27 @@ def record_payment(user_id: int, telegram_charge: str, amount: int, currency: st
             )
 
 
-# ───────────────────────────────────────────────
-# Алиасы и совместимые функции для handlers.py
-# ───────────────────────────────────────────────
+# âââââââââââââââââââââââââââââââââââââââââââââââ
+# ÐÐ»Ð¸Ð°ÑÑ Ð¸ ÑÐ¾Ð²Ð¼ÐµÑÑÐ¸Ð¼ÑÐµ ÑÑÐ½ÐºÑÐ¸Ð¸ Ð´Ð»Ñ handlers.py
+# âââââââââââââââââââââââââââââââââââââââââââââââ
 
-def upsert_user(user_id: int, username: str | None = None) -> None:
-    """Алиас для ensure_user."""
-    ensure_user(user_id, username)
+def upsert_user(user_id: int, username: str | None = None, first_name: str | None = None) -> None:
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ ensure_user."""
+    ensure_user(user_id, username, first_name)
 
 
 def has_active_subscription(user_id: int) -> bool:
-    """Алиас для is_subscribed."""
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ is_subscribed."""
     return is_subscribed(user_id)
 
 
 def activate_paid(user_id: int, months: int = 1) -> None:
-    """Алиас для add_subscription."""
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ add_subscription."""
     add_subscription(user_id, months)
 
 
 def deactivate_subscription(user_id: int) -> None:
-    """Немедленно завершить все активные подписки пользователя."""
+    """ÐÐµÐ¼ÐµÐ´Ð»ÐµÐ½Ð½Ð¾ Ð·Ð°Ð²ÐµÑÑÐ¸ÑÑ Ð²ÑÐµ Ð°ÐºÑÐ¸Ð²Ð½ÑÐµ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ñ."""
     now_ts = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         if USE_POSTGRES:
@@ -454,17 +459,17 @@ def deactivate_subscription(user_id: int) -> None:
 
 
 def add_user_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
-    """Алиас для add_ticker."""
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ add_ticker."""
     add_ticker(user_id, ticker, exchange)
 
 
 def remove_user_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
-    """Алиас для remove_ticker."""
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ remove_ticker."""
     remove_ticker(user_id, ticker, exchange)
 
 
 def get_stats() -> dict:
-    """Статистика для /admin: пользователи, подписки, алерты за 24ч."""
+    """Ð¡ÑÐ°ÑÐ¸ÑÑÐ¸ÐºÐ° Ð´Ð»Ñ /admin: Ð¿Ð¾Ð»ÑÐ·Ð¾Ð²Ð°ÑÐµÐ»Ð¸, Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸, Ð°Ð»ÐµÑÑÑ Ð·Ð° 24Ñ."""
     now_ts = datetime.now(timezone.utc).timestamp()
     day_ago = now_ts - 86400
     with get_conn() as conn:
@@ -500,22 +505,22 @@ def get_stats() -> dict:
     }
 
 
-# Цена подписки хранится в памяти (можно перенести в БД позже)
+# Ð¦ÐµÐ½Ð° Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸ ÑÑÐ°Ð½Ð¸ÑÑÑ Ð² Ð¿Ð°Ð¼ÑÑÐ¸ (Ð¼Ð¾Ð¶Ð½Ð¾ Ð¿ÐµÑÐµÐ½ÐµÑÑÐ¸ Ð² ÐÐ Ð¿Ð¾Ð·Ð¶Ðµ)
 _subscription_price: dict = {"stars": 250}
 
 
 def get_subscription_price() -> dict:
-    """Вернуть текущую цену подписки."""
+    """ÐÐµÑÐ½ÑÑÑ ÑÐµÐºÑÑÑÑ ÑÐµÐ½Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸."""
     return dict(_subscription_price)
 
 
 def set_subscription_price(stars: int) -> None:
-    """Установить цену подписки."""
+    """Ð£ÑÑÐ°Ð½Ð¾Ð²Ð¸ÑÑ ÑÐµÐ½Ñ Ð¿Ð¾Ð´Ð¿Ð¸ÑÐºÐ¸."""
     _subscription_price["stars"] = stars
 
 
 def grant_trial(user_id: int) -> bool:
-    """Принудительно дать триал (даже если уже был). Для /admin."""
+    """ÐÑÐ¸Ð½ÑÐ´Ð¸ÑÐµÐ»ÑÐ½Ð¾ Ð´Ð°ÑÑ ÑÑÐ¸Ð°Ð» (Ð´Ð°Ð¶Ðµ ÐµÑÐ»Ð¸ ÑÐ¶Ðµ Ð±ÑÐ»). ÐÐ»Ñ /admin."""
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=TRIAL_PERIOD_HOURS)
     with get_conn() as conn:
@@ -536,10 +541,10 @@ def grant_trial(user_id: int) -> bool:
 
 
 def add_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
-    """Алиас для add_ticker."""
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ add_ticker."""
     add_ticker(user_id, ticker, exchange)
 
 
 def remove_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
-    """Алиас для remove_ticker."""
+    """ÐÐ»Ð¸Ð°Ñ Ð´Ð»Ñ remove_ticker."""
     remove_ticker(user_id, ticker, exchange)
