@@ -1,11 +1,14 @@
 services:
   - type: web
-    name: anomaly-moex-bot
+    name: anomaly-alert-bot
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /
     envVars:
+      - key: PORT
+        value: "10000"
       - key: BOT_TOKEN
         sync: false
       - key: ADMIN_IDS
