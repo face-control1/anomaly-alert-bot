@@ -93,6 +93,36 @@ async def cb_main_menu(cb: CallbackQuery) -> None:
 
 # ─── Статус подписки ──────────────────────────────────────────────────────────
 
+@router.callback_query(F.data == "about")
+async def cb_about(cb: CallbackQuery) -> None:
+    try:
+        await cb.message.edit_text(
+            "ℹ️ <b>О боте MoexHelp</b>
+
+"
+            "Бот каждую минуту сканирует рынок и присылает алерты:
+
+"
+            "🔊 <b>Аномальный объём</b> — объём торгов превышает среднее в 3× и более
+"
+            "🚨 <b>Резкое движение</b> — цена изменилась более чем на 3% за минуту
+"
+            "📈📉 <b>Полосы Боллинджера</b> — цена вышла за 2.5σ от скользящей средней
+
+"
+            "Мониторинг: все акции ММВБ + ваши персональные тикеры.
+
+"
+            "💰 Стоимость: <b>250 ⭐ Stars / месяц</b>
+"
+            "🎁 Пробный период: <b>24 часа бесплатно</b>",
+            reply_markup=back_kb(), parse_mode="HTML",
+        )
+    except Exception: pass
+    await cb.answer()
+
+
+
 @router.callback_query(F.data == "status")
 async def cb_status(cb: CallbackQuery) -> None:
     info = get_subscription_info(cb.from_user.id)
