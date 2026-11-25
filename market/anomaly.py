@@ -14,8 +14,11 @@ import time
 import html
 from config import MIN_SIGNAL_VALUE_RUB
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+
+MSK = timezone(timedelta(hours=3))
 
 
 # ─── Настройки пост-фильтра ──────────────────────────────────────────────────
@@ -50,7 +53,7 @@ class Alert:
     score: int = 50
     volume_ratio: float = 0.0
     trigger_reason: str = ""
-    alert_time: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
+    alert_time: str = field(default_factory=lambda: datetime.now(MSK).strftime("%H:%M:%S"))
 
     # Метка времени получения события (мс) — для Freshness-фильтра
     received_at_ms: float = field(default_factory=lambda: time.monotonic() * 1000)

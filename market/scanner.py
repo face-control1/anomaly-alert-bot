@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from config import (
@@ -35,6 +35,7 @@ from market.anomaly import Alert, AlertCooldownFilter, run_all_detectors
 from health_state import update_health
 
 logger = logging.getLogger(__name__)
+MSK = timezone(timedelta(hours=3))
 
 # ─── Настройки детекторов ────────────────────────────────────────────────────
 VOLUME_MULTIPLIER = VOLUME_SPIKE_MULTIPLIER
@@ -125,7 +126,7 @@ class MarketScanner:
         scan_started = time.monotonic()
         self._cycle += 1
         update_health(last_scan_at=time.time())
-        logger.info("[Scan #%d] Старт %s", self._cycle, datetime.now().strftime("%H:%M:%S"))
+        logger.info("[Scan #%d] Старт %s МСК", self._cycle, datetime.now(MSK).strftime("%H:%M:%S"))
 
         # Шаг 1: список всех торгуемых тикеров
         tickers = await get_all_moex_tickers(SCAN_BOARD)

@@ -15,13 +15,14 @@ import ssl
 import statistics
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Callable, Coroutine, Optional
 
 import aiohttp
 import certifi
 
 logger = logging.getLogger(__name__)
+MSK = timezone(timedelta(hours=3))
 
 # ─── Настройки ───────────────────────────────────────────────────────────────
 
@@ -59,7 +60,7 @@ class LargeOrderAlert:
     value_rub: float
     median_order_value: float     # медиана по стакану (руб)
     relative_size: float          # quantity / median (множитель)
-    alert_time: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
+    alert_time: str = field(default_factory=lambda: datetime.now(MSK).strftime("%H:%M:%S"))
     alert_type: str = "large_order"
 
     def format_message(self) -> str:
@@ -85,7 +86,7 @@ class IcebergAlert:
     price: float
     k_count: int                    # число подтверждённых циклов
     total_executed_lots: int        # суммарный исполненный объём
-    alert_time: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
+    alert_time: str = field(default_factory=lambda: datetime.now(MSK).strftime("%H:%M:%S"))
     alert_type: str = "iceberg"
 
     def format_message(self) -> str:
