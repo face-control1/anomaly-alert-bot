@@ -75,8 +75,8 @@ async def make_alert_sender(bot: Bot):
             alert_kb = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="📊 Открыть на MOEX",
-                        url=f"https://www.moex.com/ru/issue.aspx?board=TQBR&code={alert.ticker}",
+                        text="📈 Открыть график",
+                        url=f"https://www.tradingview.com/chart/?symbol=MOEX%3A{alert.ticker}",
                     ),
                     InlineKeyboardButton(text="🎛 Настройки", callback_data="settings"),
                 ],
