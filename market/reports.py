@@ -9,6 +9,7 @@ from database.db import (
     get_expiring_subscriptions,
     get_recent_alerts,
     get_signal_performance,
+    get_runtime_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,8 @@ MSK = timezone(timedelta(hours=3))
 
 
 async def send_morning_report(bot) -> None:
+    if not get_runtime_config()["morning_reports"]:
+        return
     text = (
         "☀️ <b>Утренний радар MOEX</b>\n\n"
         "Сканер готов к торговому дню. В алертах указываются рейтинг, "
@@ -26,6 +29,8 @@ async def send_morning_report(bot) -> None:
 
 
 async def send_evening_report(bot) -> None:
+    if not get_runtime_config()["evening_reports"]:
+        return
     alerts = get_recent_alerts(5)
     stats = get_signal_performance()
     lines = ["🌆 <b>Итоги торгового дня</b>", ""]

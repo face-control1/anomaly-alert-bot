@@ -2,7 +2,6 @@
 Клавиатуры и кнопки Telegram.
 """
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from config import SUBSCRIPTION_PRICE_STARS
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
@@ -50,6 +49,8 @@ def settings_kb(settings: dict) -> InlineKeyboardMarkup:
 
 
 def buy_menu_kb() -> InlineKeyboardMarkup:
+    from database.db import get_subscription_price
+    price = get_subscription_price()["stars"]
     try:
         from bot.payments_yukassa import YUKASSA_AVAILABLE
         show_yukassa = YUKASSA_AVAILABLE
@@ -64,15 +65,15 @@ def buy_menu_kb() -> InlineKeyboardMarkup:
         )])
     buttons.extend([
         [InlineKeyboardButton(
-            text=f"⭐ 1 месяц · {SUBSCRIPTION_PRICE_STARS} Stars",
+            text=f"⭐ 1 месяц · {price} Stars",
             callback_data="pay_stars:1",
         )],
         [InlineKeyboardButton(
-            text=f"⭐ 3 месяца · {round(SUBSCRIPTION_PRICE_STARS * 2.7)} Stars · −10%",
+            text=f"⭐ 3 месяца · {round(price * 2.7)} Stars · −10%",
             callback_data="pay_stars:3",
         )],
         [InlineKeyboardButton(
-            text=f"⭐ 12 месяцев · {SUBSCRIPTION_PRICE_STARS * 9} Stars · −25%",
+            text=f"⭐ 12 месяцев · {price * 9} Stars · −25%",
             callback_data="pay_stars:12",
         )],
         [InlineKeyboardButton(text="🎁 Подарить подписку", callback_data="gift_subscription")],

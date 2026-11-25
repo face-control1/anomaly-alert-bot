@@ -18,12 +18,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from config import (
-    SUBSCRIPTION_PRICE_STARS,
     SUBSCRIPTION_TITLE,
     SUBSCRIPTION_DESCRIPTION,
     ADMIN_IDS,
     SUPPORT_USERNAME,
-    PROMO_CODES,
 )
 from database.db import (
     upsert_user,
@@ -55,6 +53,8 @@ from database.db import (
     get_signal_performance,
     register_referral,
     get_referral_count,
+    get_promo_codes,
+    create_admin_login_code,
 )
 from bot.keyboards import (
     main_menu_kb,
@@ -358,7 +358,7 @@ async def cb_buy(cb: CallbackQuery) -> None:
         extra = f"\n\n⚠️ У вас уже есть подписка до {exp}. Новый платёж продлит её."
     await cb.message.edit_text(
         f"⭐ <b>Подписка AnomalyAlert</b>\n\n"
-        f"💰 Стоимость: <b>{SUBSCRIPTION_PRICE_STARS} Telegram Stars</b> / месяц\n"
+        f"💰 Стоимость: <b>{get_subscription_price()['stars']} Telegram Stars</b> / месяц\n"
         f"🔄 Мониторинг каждые 60 секунд\n"
         f"📊 Топ-15 акций ММВБ + персональные тикеры{extra}",
         reply_markup=buy_menu_kb(),
@@ -412,7 +412,7 @@ async def cb_promo_code(cb: CallbackQuery, state: FSMContext) -> None:
 @router.message(PromoState.waiting_for_code)
 async def handle_promo_code(msg: Message, state: FSMContext) -> None:
     code = (msg.text or "").strip().upper()
-    discount = PROMO_CODES.get(code)
+    discount = get_promo_codes().get(code)
     if not discount:
         await msg.answer("❌ Промокод не найден или уже не действует.")
         return
@@ -435,7 +435,7 @@ async def handle_promo_code(msg: Message, state: FSMContext) -> None:
 async def cb_pay_promo(cb: CallbackQuery, bot: Bot) -> None:
     _, months_raw, discount_raw = cb.data.split(":", 2)
     months, discount = int(months_raw), int(discount_raw)
-    if months not in (1, 3, 12) or discount not in PROMO_CODES.values():
+    if months not in (1, 3, 12) or discount not in get_promo_codes().values():
         await cb.answer("Промокод устарел", show_alert=True)
         return
     price, label = _stars_plan(months, discount)
@@ -509,7 +509,7 @@ async def pre_checkout(query: PreCheckoutQuery) -> None:
         discount = int(parts[3]) if kind == "promo" else 0
     except (IndexError, ValueError):
         kind, payload_user_id, months, discount = "", 0, 0, 0
-    promo_valid = kind != "promo" or discount in PROMO_CODES.values()
+    promo_valid = kind != "promo" or discount in get_promo_codes().values()
     expected_price = _stars_plan(months, discount)[0] if months in (1, 3, 12) else -1
     is_valid = (
         query.currency == "XTR"
@@ -814,6 +814,19 @@ async def cmd_admin(msg: Message) -> None:
     await msg.answer(
         _admin_panel_text(),
         reply_markup=_admin_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("weblogin"))
+async def cmd_web_login(msg: Message) -> None:
+    if msg.from_user.id not in ADMIN_IDS:
+        return
+    code = create_admin_login_code(msg.from_user.id)
+    await msg.answer(
+        "🔐 <b>Вход в веб-админку</b>\n\n"
+        f"Одноразовый код: <code>{code}</code>\n\n"
+        "Код действует 5 минут и сгорает сразу после входа. Никому его не передавайте.",
         parse_mode="HTML",
     )
 

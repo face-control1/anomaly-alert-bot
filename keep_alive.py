@@ -8,7 +8,7 @@ import json
 import time
 import urllib.request
 from threading import Thread
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 import logging
 from health_state import get_health
 
@@ -19,6 +19,9 @@ SELF_PING_INTERVAL = 10 * 60  # 10 минут
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        from admin_api import handle_admin_request
+        if handle_admin_request(self):
+            return
         if self.path.startswith("/live"):
             body = b'{"status":"alive"}'
             self.send_response(200)
@@ -40,6 +43,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        from admin_api import handle_admin_request
+        if not handle_admin_request(self):
+            self.send_error(404)
+
+    def do_OPTIONS(self):
+        from admin_api import handle_admin_request
+        if not handle_admin_request(self):
+            self.send_error(404)
 
     def do_HEAD(self):
         self.send_response(200)
@@ -63,9 +76,12 @@ def _self_ping_loop(url: str) -> None:
         time.sleep(SELF_PING_INTERVAL)
 
 
-def keep_alive() -> None:
+def keep_alive(bot=None, loop=None) -> None:
+    if bot is not None and loop is not None:
+        from admin_api import configure_admin_api
+        configure_admin_api(bot, loop)
     port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     t = Thread(target=server.serve_forever, daemon=True)
     t.start()
     logger.info("Keep-alive сервер запущен на порту %d", port)

@@ -215,8 +215,6 @@ async def make_corp_reports_callback(bot: Bot):
 async def main() -> None:
     setup_logging()
     logger = logging.getLogger(__name__)
-    keep_alive()  # HTTP-сервер для Render/UptimeRobot
-
     if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
         logger.error("❌ Укажите BOT_TOKEN в .env файле!")
         sys.exit(1)
@@ -228,6 +226,7 @@ async def main() -> None:
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    keep_alive(bot, asyncio.get_running_loop())  # Render health + web admin API
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
 

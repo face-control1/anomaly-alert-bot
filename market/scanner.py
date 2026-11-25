@@ -17,12 +17,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from config import (
-    VOLUME_SPIKE_MULTIPLIER,
-    PRICE_CHANGE_THRESHOLD_PCT,
-    VOLATILITY_SIGMA,
-    MIN_SIGNAL_VALUE_RUB,
-)
+from database.db import get_runtime_config
 
 from market.moex import (
     get_all_moex_tickers,
@@ -38,9 +33,6 @@ logger = logging.getLogger(__name__)
 MSK = timezone(timedelta(hours=3))
 
 # ─── Настройки детекторов ────────────────────────────────────────────────────
-VOLUME_MULTIPLIER = VOLUME_SPIKE_MULTIPLIER
-PRICE_THRESHOLD_PCT = PRICE_CHANGE_THRESHOLD_PCT
-BOLLINGER_SIGMA = VOLATILITY_SIGMA
 CANDLES_N = 30           # количество минутных свечей для анализа
 SCAN_BOARD = "TQBR"
 MAX_CONCURRENT_REQUESTS = 8
@@ -221,8 +213,9 @@ class MarketScanner:
         last_volume = float(candles[-1].get("volume") or 0)
         if last_volume < self._min_volume_lots:
             return []
+        runtime = get_runtime_config()
         last_value = float(candles[-1].get("value") or 0)
-        if last_value < MIN_SIGNAL_VALUE_RUB:
+        if last_value < runtime["min_signal_value_rub"]:
             return []
 
         # Шаг 4: Detectors
@@ -233,9 +226,9 @@ class MarketScanner:
             marketdata=marketdata,
             securities=securities,
             weekly_change=self._weekly_cache.get(ticker),
-            volume_multiplier=VOLUME_MULTIPLIER,
-            price_threshold_pct=PRICE_THRESHOLD_PCT,
-            bollinger_sigma=BOLLINGER_SIGMA,
+            volume_multiplier=runtime["volume_multiplier"],
+            price_threshold_pct=runtime["price_threshold_pct"],
+            bollinger_sigma=runtime["bollinger_sigma"],
         )
 
         # Недельную динамику загружаем только для реально сработавшего сигнала.

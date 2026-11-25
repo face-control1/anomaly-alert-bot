@@ -5,6 +5,8 @@ database/db.py ÃÂ¢ÃÂÃÂ ÃÂÃÂÃÂÃÂ½ÃÂ
 import os
 import logging
 import shutil
+import hashlib
+import secrets
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 
@@ -162,6 +164,46 @@ def init_db() -> None:
             """)
             cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS min_score INTEGER NOT NULL DEFAULT 60")
             cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'all'")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS promo_codes (
+                    code TEXT PRIMARY KEY,
+                    discount INTEGER NOT NULL,
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS admin_login_codes (
+                    code_hash TEXT PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    used_at DOUBLE PRECISION
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS admin_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id BIGINT NOT NULL,
+                    expires_at DOUBLE PRECISION NOT NULL,
+                    created_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS admin_audit (
+                    id SERIAL PRIMARY KEY,
+                    admin_id BIGINT NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    created_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                )
+            """)
             cur.close()
         else:
             conn.executescript("""
@@ -219,6 +261,36 @@ def init_db() -> None:
                     paused        INTEGER NOT NULL DEFAULT 0
                     ,min_score    INTEGER NOT NULL DEFAULT 60
                     ,direction    TEXT NOT NULL DEFAULT 'all'
+                );
+                CREATE TABLE IF NOT EXISTS app_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at REAL NOT NULL DEFAULT (unixepoch())
+                );
+                CREATE TABLE IF NOT EXISTS promo_codes (
+                    code TEXT PRIMARY KEY,
+                    discount INTEGER NOT NULL,
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL DEFAULT (unixepoch())
+                );
+                CREATE TABLE IF NOT EXISTS admin_login_codes (
+                    code_hash TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    expires_at REAL NOT NULL,
+                    used_at REAL
+                );
+                CREATE TABLE IF NOT EXISTS admin_sessions (
+                    token_hash TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    expires_at REAL NOT NULL,
+                    created_at REAL NOT NULL DEFAULT (unixepoch())
+                );
+                CREATE TABLE IF NOT EXISTS admin_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    admin_id INTEGER NOT NULL,
+                    action TEXT NOT NULL,
+                    details TEXT,
+                    created_at REAL NOT NULL DEFAULT (unixepoch())
                 );
             """)
             existing_columns = {
@@ -966,12 +1038,16 @@ _subscription_price: dict = {"stars": 250}
 
 def get_subscription_price() -> dict:
     """ÃÂÃÂµÃÂÃÂ½ÃÂÃÂÃÂ ÃÂÃÂµÃÂºÃÂÃÂÃÂÃÂ ÃÂÃÂµÃÂ½ÃÂ ÃÂ¿ÃÂ¾ÃÂ´ÃÂ¿ÃÂ¸ÃÂÃÂºÃÂ¸."""
-    return dict(_subscription_price)
+    try:
+        return {"stars": int(get_app_config("subscription_price_stars", str(_subscription_price["stars"])))}
+    except Exception:
+        return dict(_subscription_price)
 
 
 def set_subscription_price(stars: int) -> None:
     """ÃÂ£ÃÂÃÂÃÂ°ÃÂ½ÃÂ¾ÃÂ²ÃÂ¸ÃÂÃÂ ÃÂÃÂµÃÂ½ÃÂ ÃÂ¿ÃÂ¾ÃÂ´ÃÂ¿ÃÂ¸ÃÂÃÂºÃÂ¸."""
     _subscription_price["stars"] = stars
+    set_app_config("subscription_price_stars", str(stars))
 
 
 def grant_trial(user_id: int, hours: int = TRIAL_PERIOD_HOURS) -> bool:
@@ -1004,3 +1080,202 @@ def add_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> bool:
 def remove_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
     """ÃÂÃÂ»ÃÂ¸ÃÂ°ÃÂ ÃÂ´ÃÂ»ÃÂ remove_ticker."""
     remove_ticker(user_id, ticker, exchange)
+
+
+# ─── Shared web-admin state ───
+
+CONFIG_DEFAULTS = {
+    "subscription_price_stars": "250",
+    "volume_multiplier": os.getenv("VOLUME_SPIKE_MULTIPLIER", "3.0"),
+    "price_threshold_pct": os.getenv("PRICE_CHANGE_THRESHOLD_PCT", "3.0"),
+    "bollinger_sigma": os.getenv("VOLATILITY_SIGMA", "2.5"),
+    "min_signal_value_rub": os.getenv("MIN_SIGNAL_VALUE_RUB", "250000"),
+    "morning_reports": "true",
+    "evening_reports": "true",
+}
+
+
+def get_app_config(key: str, default: str | None = None) -> str:
+    fallback = CONFIG_DEFAULTS.get(key, default)
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"SELECT value FROM app_config WHERE key = {PH}", (key,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute("SELECT value FROM app_config WHERE key = ?", (key,)).fetchone()
+    if row:
+        return str(row[0])
+    if fallback is None:
+        raise KeyError(key)
+    return str(fallback)
+
+
+def set_app_config(key: str, value: str) -> None:
+    if key not in CONFIG_DEFAULTS:
+        raise ValueError("Unknown config key")
+    now = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO app_config (key, value, updated_at) VALUES ({PH}, {PH}, {PH}) "
+                f"ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at",
+                (key, str(value), now),
+            )
+            cur.close()
+        else:
+            conn.execute(
+                "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (key, str(value), now),
+            )
+
+
+def get_runtime_config() -> dict:
+    return {
+        "subscription_price_stars": int(get_app_config("subscription_price_stars")),
+        "volume_multiplier": float(get_app_config("volume_multiplier")),
+        "price_threshold_pct": float(get_app_config("price_threshold_pct")),
+        "bollinger_sigma": float(get_app_config("bollinger_sigma")),
+        "min_signal_value_rub": float(get_app_config("min_signal_value_rub")),
+        "morning_reports": get_app_config("morning_reports").lower() == "true",
+        "evening_reports": get_app_config("evening_reports").lower() == "true",
+    }
+
+
+def get_promo_codes() -> dict[str, int]:
+    with get_conn() as conn:
+        query = "SELECT code, discount FROM promo_codes WHERE active = " + ("TRUE" if USE_POSTGRES else "1")
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(query).fetchall()
+    if rows:
+        return {str(row[0]): int(row[1]) for row in rows}
+    result = {}
+    for item in os.getenv("PROMO_CODES", "WELCOME10:10").split(","):
+        try:
+            code, discount = item.split(":", 1)
+            result[code.strip().upper()] = int(discount)
+        except ValueError:
+            pass
+    return result
+
+
+def upsert_promo_code(code: str, discount: int, active: bool = True) -> None:
+    code = code.strip().upper()
+    if not code or not 1 <= int(discount) <= 90:
+        raise ValueError("Invalid promo code")
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO promo_codes (code, discount, active) VALUES ({PH}, {PH}, {PH}) "
+                f"ON CONFLICT (code) DO UPDATE SET discount = EXCLUDED.discount, active = EXCLUDED.active",
+                (code, int(discount), active),
+            )
+            cur.close()
+        else:
+            conn.execute(
+                "INSERT INTO promo_codes (code, discount, active) VALUES (?, ?, ?) "
+                "ON CONFLICT (code) DO UPDATE SET discount = excluded.discount, active = excluded.active",
+                (code, int(discount), int(active)),
+            )
+
+
+def disable_promo_code(code: str) -> None:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"UPDATE promo_codes SET active = FALSE WHERE code = {PH}", (code.upper(),))
+            cur.close()
+        else:
+            conn.execute("UPDATE promo_codes SET active = 0 WHERE code = ?", (code.upper(),))
+
+
+def create_admin_login_code(user_id: int, ttl_seconds: int = 300) -> str:
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    digest = hashlib.sha256(code.encode()).hexdigest()
+    now = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"DELETE FROM admin_login_codes WHERE user_id = {PH} OR expires_at < {PH}", (user_id, now))
+            cur.execute(f"INSERT INTO admin_login_codes (code_hash, user_id, expires_at) VALUES ({PH}, {PH}, {PH})", (digest, user_id, now + ttl_seconds))
+            cur.close()
+        else:
+            conn.execute("DELETE FROM admin_login_codes WHERE user_id = ? OR expires_at < ?", (user_id, now))
+            conn.execute("INSERT INTO admin_login_codes (code_hash, user_id, expires_at) VALUES (?, ?, ?)", (digest, user_id, now + ttl_seconds))
+    return code
+
+
+def exchange_admin_login_code(code: str, allowed_admin_ids: list[int], ttl_hours: int = 12) -> tuple[str, int] | None:
+    digest = hashlib.sha256(code.strip().encode()).hexdigest()
+    now = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"SELECT user_id FROM admin_login_codes WHERE code_hash = {PH} AND expires_at > {PH} AND used_at IS NULL", (digest, now))
+            row = cur.fetchone()
+            if not row or int(row[0]) not in allowed_admin_ids:
+                cur.close()
+                return None
+            user_id = int(row[0])
+            cur.execute(f"UPDATE admin_login_codes SET used_at = {PH} WHERE code_hash = {PH}", (now, digest))
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            cur.execute(f"INSERT INTO admin_sessions (token_hash, user_id, expires_at) VALUES ({PH}, {PH}, {PH})", (token_hash, user_id, now + ttl_hours * 3600))
+            cur.close()
+        else:
+            row = conn.execute("SELECT user_id FROM admin_login_codes WHERE code_hash = ? AND expires_at > ? AND used_at IS NULL", (digest, now)).fetchone()
+            if not row or int(row[0]) not in allowed_admin_ids:
+                return None
+            user_id = int(row[0])
+            conn.execute("UPDATE admin_login_codes SET used_at = ? WHERE code_hash = ?", (now, digest))
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            conn.execute("INSERT INTO admin_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)", (token_hash, user_id, now + ttl_hours * 3600))
+    return token, user_id
+
+
+def verify_admin_session(token: str) -> int | None:
+    if not token:
+        return None
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    now = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"SELECT user_id FROM admin_sessions WHERE token_hash = {PH} AND expires_at > {PH}", (digest, now))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute("SELECT user_id FROM admin_sessions WHERE token_hash = ? AND expires_at > ?", (digest, now)).fetchone()
+    return int(row[0]) if row else None
+
+
+def log_admin_action(admin_id: int, action: str, details: str = "") -> None:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"INSERT INTO admin_audit (admin_id, action, details) VALUES ({PH}, {PH}, {PH})", (admin_id, action, details[:1000]))
+            cur.close()
+        else:
+            conn.execute("INSERT INTO admin_audit (admin_id, action, details) VALUES (?, ?, ?)", (admin_id, action, details[:1000]))
+
+
+def get_admin_audit(limit: int = 100) -> list[dict]:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute("SELECT admin_id, action, details, created_at FROM admin_audit ORDER BY created_at DESC LIMIT %s", (limit,))
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute("SELECT admin_id, action, details, created_at FROM admin_audit ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(row) for row in rows]
