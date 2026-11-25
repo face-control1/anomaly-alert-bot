@@ -45,8 +45,9 @@ class Alert:
 
     # Рыночные данные
     current_price: float = 0.0        # последняя цена
-    volume_1m: int = 0                # объём за текущую минуту (лоты)
+    volume_1m: int = 0                # количество бумаг за минуту (штуки)
     value_1m: float = 0.0             # объём в рублях за минуту
+    lot_size: int = 1                 # количество бумаг в одном лоте
     price_change_1m_pct: float = 0.0  # изменение за минуту %
     price_change_day_pct: float = 0.0 # изменение за день %
     price_change_week_pct: Optional[float] = None  # изменение за неделю %
@@ -84,6 +85,14 @@ class Alert:
             score_badge = "🟡 заметный"
         else:
             score_badge = "🟢 умеренный"
+        units_text = f"{self.volume_1m:,}".replace(",", " ")
+        value_text = f"{self.value_1m:,.0f}".replace(",", " ")
+        lots = self.volume_1m / max(self.lot_size, 1)
+        lots_text = (
+            f"{int(lots):,}".replace(",", " ")
+            if lots.is_integer()
+            else f"{lots:,.2f}".replace(",", " ")
+        )
         return (
             f"{self.emoji} <b>{ticker}</b>  ·  {short_name}\n"
             f"<code>{self.exchange}  |  {self.alert_time} МСК</code>\n"
@@ -93,9 +102,9 @@ class Alert:
             f"🎯 Рейтинг: <b>{self.score}/100</b> · {score_badge}\n"
             f"💡 Почему: {reason}\n"
             f"💰 <b>{self.current_price:,.2f} ₽</b>\n"
-            f"📊 {self.volume_1m:,} лот"
-            + (f" / {self.value_1m/1_000_000:.2f}M ₽" if self.value_1m > 0 else "")
-            + f"\n"
+            f"📊 <b>За последнюю минуту</b>\n"
+            f"• Количество: <b>{units_text} шт.</b> · {lots_text} лот.\n"
+            f"• Оборот: <b>{value_text} ₽</b>\n"
             f"⏱ 1 мин: <b>{min_sign}{self.price_change_1m_pct:.2f}%</b>  ·  "
             f"день: <b>{day_sign}{self.price_change_day_pct:.2f}%</b>\n"
             f"📆 Неделя: <b>{week_str}</b>"
@@ -191,6 +200,7 @@ class AlertCooldownFilter:
                     current_price=primary.current_price,
                     volume_1m=primary.volume_1m,
                     value_1m=primary.value_1m,
+                    lot_size=primary.lot_size,
                     price_change_1m_pct=primary.price_change_1m_pct,
                     price_change_day_pct=primary.price_change_day_pct,
                     price_change_week_pct=primary.price_change_week_pct,
@@ -274,10 +284,11 @@ def detect_volume_spike(
         alert_type="volume_spike",
         emoji="🔥",
         headline=f"Всплеск объёма × {ratio:.1f} от нормы",
-        details=f"Текущий объём: {int(last_vol):,} лот | Медиана: {int(median_vol):,} лот",
+        details=f"Текущий объём: {int(last_vol):,} шт. | Медиана: {int(median_vol):,} шт.",
         current_price=current_price,
         volume_1m=int(last_vol),
         value_1m=last_value,
+        lot_size=max(1, int(_safe_float(securities.get("LOTSIZE"), 1))),
         price_change_1m_pct=price_change_1m,
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
@@ -352,6 +363,7 @@ def detect_price_move(
         current_price=current_price,
         volume_1m=int(volume),
         value_1m=value,
+        lot_size=max(1, int(_safe_float(securities.get("LOTSIZE"), 1))),
         price_change_1m_pct=round(pct, 2),
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
@@ -428,6 +440,7 @@ def detect_bollinger_break(
         current_price=current_price,
         volume_1m=int(volume),
         value_1m=value,
+        lot_size=max(1, int(_safe_float(securities.get("LOTSIZE"), 1))),
         price_change_1m_pct=price_change_1m,
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
