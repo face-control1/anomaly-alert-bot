@@ -37,6 +37,10 @@ ALLOWED_ORIGINS = {
     "https://moexhelp.trimmount.chatgpt.site",
     "https://moexhelp.ru",
     "https://www.moexhelp.ru",
+    "http://moexhelp.ru",
+    "http://www.moexhelp.ru",
+    "http://moexhelp.ru.swtest.ru",
+    "https://moexhelp.ru.swtest.ru",
 }
 _bot = None
 _loop: asyncio.AbstractEventLoop | None = None
