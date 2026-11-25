@@ -21,6 +21,7 @@ from database.db import (
     get_all_active_user_ids,
     get_all_users,
     get_promo_codes,
+    get_recent_payments,
     get_recent_alerts,
     get_runtime_config,
     get_signal_performance,
@@ -30,6 +31,7 @@ from database.db import (
     set_app_config,
     upsert_promo_code,
     verify_admin_session,
+    revoke_admin_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,12 @@ async def _broadcast(text: str) -> dict:
     return {"sent": sent, "failed": failed}
 
 
+async def _send_direct(user_id: int, text: str) -> None:
+    if _bot is None:
+        raise RuntimeError("Bot runtime unavailable")
+    await _bot.send_message(user_id, text, parse_mode="HTML")
+
+
 def handle_admin_request(handler) -> bool:
     parsed = urlparse(handler.path)
     if parsed.path == "/api/public/config" and handler.command in ("GET", "OPTIONS"):
@@ -182,6 +190,8 @@ def handle_admin_request(handler) -> bool:
             _send(handler, 200, {"users": get_all_users()[:limit]})
         elif handler.command == "GET" and parsed.path == "/api/admin/audit":
             _send(handler, 200, {"items": get_admin_audit(100)})
+        elif handler.command == "GET" and parsed.path == "/api/admin/payments":
+            _send(handler, 200, {"items": get_recent_payments(200)})
         elif handler.command == "POST" and parsed.path == "/api/admin/trial":
             data = _read_json(handler)
             user_id, hours = int(data["user_id"]), int(data.get("hours", 24))
@@ -204,9 +214,18 @@ def handle_admin_request(handler) -> bool:
         elif handler.command == "POST" and parsed.path == "/api/admin/config":
             data = _read_json(handler)
             allowed = set(get_runtime_config())
+            ranges = {
+                "subscription_price_stars": (1, 100000),
+                "volume_multiplier": (1, 100),
+                "price_threshold_pct": (0.1, 100),
+                "bollinger_sigma": (0.5, 20),
+                "min_signal_value_rub": (0, 10_000_000_000),
+            }
             for key, value in data.items():
                 if key not in allowed:
                     raise ValueError(f"Unknown config: {key}")
+                if key in ranges and not ranges[key][0] <= float(value) <= ranges[key][1]:
+                    raise ValueError(f"Out of range: {key}")
                 set_app_config(key, str(value).lower() if isinstance(value, bool) else str(value))
             log_admin_action(admin_id, "update_config", json.dumps(data, ensure_ascii=False))
             _send(handler, 200, {"ok": True, "config": get_runtime_config()})
@@ -229,6 +248,23 @@ def handle_admin_request(handler) -> bool:
             result = asyncio.run_coroutine_threadsafe(_broadcast(text), _loop).result(timeout=300)
             log_admin_action(admin_id, "broadcast", f"sent={result['sent']}; failed={result['failed']}")
             _send(handler, 200, {"ok": True, **result})
+        elif handler.command == "POST" and parsed.path == "/api/admin/message":
+            data = _read_json(handler)
+            user_id = int(data["user_id"])
+            text = str(data.get("text", "")).strip()
+            if not 1 <= len(text) <= 3500:
+                raise ValueError("Message length")
+            if _loop is None:
+                raise RuntimeError("Bot loop unavailable")
+            asyncio.run_coroutine_threadsafe(_send_direct(user_id, text), _loop).result(timeout=30)
+            log_admin_action(admin_id, "direct_message", f"user={user_id}; chars={len(text)}")
+            _send(handler, 200, {"ok": True})
+        elif handler.command == "POST" and parsed.path == "/api/admin/logout":
+            auth = handler.headers.get("Authorization", "")
+            if auth.startswith("Bearer "):
+                revoke_admin_session(auth[7:].strip())
+            log_admin_action(admin_id, "web_logout", "Admin session revoked")
+            _send(handler, 200, {"ok": True})
         else:
             _send(handler, 404, {"error": "not_found"})
     except (KeyError, ValueError, TypeError) as exc:

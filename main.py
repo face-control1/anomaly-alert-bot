@@ -23,6 +23,7 @@ from database.db import (
     log_alert,
     get_favorites,
     get_user_settings,
+    get_runtime_config,
 )
 from bot.handlers import router
 from market.scanner import MarketScanner
@@ -50,6 +51,8 @@ async def make_alert_sender(bot: Bot):
 
     async def send_alerts(alerts: list[Alert]) -> None:
         if not alerts:
+            return
+        if not get_runtime_config()["alerts_enabled"]:
             return
         user_ids = get_all_active_user_ids()
         if not user_ids:
@@ -148,6 +151,8 @@ async def make_orderbook_callback(bot: Bot):
     logger = logging.getLogger("orderbook_sender")
 
     async def send_orderbook_alert(alert: LargeOrderAlert) -> None:
+        if not get_runtime_config()["alerts_enabled"]:
+            return
         user_ids = get_all_active_user_ids()
         if not user_ids:
             return

@@ -1092,6 +1092,7 @@ CONFIG_DEFAULTS = {
     "min_signal_value_rub": os.getenv("MIN_SIGNAL_VALUE_RUB", "250000"),
     "morning_reports": "true",
     "evening_reports": "true",
+    "alerts_enabled": "true",
 }
 
 
@@ -1142,7 +1143,29 @@ def get_runtime_config() -> dict:
         "min_signal_value_rub": float(get_app_config("min_signal_value_rub")),
         "morning_reports": get_app_config("morning_reports").lower() == "true",
         "evening_reports": get_app_config("evening_reports").lower() == "true",
+        "alerts_enabled": get_app_config("alerts_enabled").lower() == "true",
     }
+
+
+def get_recent_payments(limit: int = 100) -> list[dict]:
+    limit = max(1, min(int(limit), 500))
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                "SELECT p.user_id, p.beneficiary_user_id, p.amount, p.currency, p.created_at, "
+                "u.username, u.first_name FROM payments p LEFT JOIN users u ON u.user_id = p.user_id "
+                "ORDER BY p.created_at DESC LIMIT %s", (limit,),
+            )
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(
+                "SELECT p.user_id, p.beneficiary_user_id, p.amount, p.currency, p.created_at, "
+                "u.username, u.first_name FROM payments p LEFT JOIN users u ON u.user_id = p.user_id "
+                "ORDER BY p.created_at DESC LIMIT ?", (limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_promo_codes() -> dict[str, int]:
@@ -1278,6 +1301,17 @@ def create_admin_session(user_id: int, ttl_hours: int = 12) -> str:
                 (digest, user_id, now + ttl_hours * 3600),
             )
     return token
+
+
+def revoke_admin_session(token: str) -> None:
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"DELETE FROM admin_sessions WHERE token_hash = {PH}", (digest,))
+            cur.close()
+        else:
+            conn.execute("DELETE FROM admin_sessions WHERE token_hash = ?", (digest,))
 
 
 def log_admin_action(admin_id: int, action: str, details: str = "") -> None:
