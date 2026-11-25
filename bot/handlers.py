@@ -23,6 +23,7 @@ from config import (
     SUBSCRIPTION_DESCRIPTION,
     ADMIN_IDS,
     SUPPORT_USERNAME,
+    PROMO_CODES,
 )
 from database.db import (
     upsert_user,
@@ -78,6 +79,10 @@ class AddFavoriteState(StatesGroup):
 
 class GiftState(StatesGroup):
     waiting_for_user_id = State()
+
+
+class PromoState(StatesGroup):
+    waiting_for_code = State()
 
 
 class AdminState(StatesGroup):
@@ -362,13 +367,15 @@ async def cb_buy(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-def _stars_plan(months: int) -> tuple[int, str]:
+def _stars_plan(months: int, discount: int = 0) -> tuple[int, str]:
     monthly = get_subscription_price()["stars"]
     if months == 3:
-        return round(monthly * 2.7), "Подписка на 3 месяца"
-    if months == 12:
-        return monthly * 9, "Подписка на 12 месяцев"
-    return monthly, "Подписка на 30 дней"
+        base, label = round(monthly * 2.7), "Подписка на 3 месяца"
+    elif months == 12:
+        base, label = monthly * 9, "Подписка на 12 месяцев"
+    else:
+        base, label = monthly, "Подписка на 30 дней"
+    return max(1, round(base * (100 - discount) / 100)), label
 
 
 @router.callback_query(F.data == "pay_stars")
@@ -387,6 +394,57 @@ async def cb_pay_stars(cb: CallbackQuery, bot: Bot) -> None:
         description=SUBSCRIPTION_DESCRIPTION,
         payload=f"sub_{cb.from_user.id}_{months}",
         currency="XTR",   # Telegram Stars
+        prices=[LabeledPrice(label=label, amount=price)],
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "promo_code")
+async def cb_promo_code(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(PromoState.waiting_for_code)
+    await cb.message.edit_text(
+        "🏷 <b>Промокод</b>\n\nВведите код одним сообщением:",
+        reply_markup=back_kb("buy"),
+    )
+    await cb.answer()
+
+
+@router.message(PromoState.waiting_for_code)
+async def handle_promo_code(msg: Message, state: FSMContext) -> None:
+    code = (msg.text or "").strip().upper()
+    discount = PROMO_CODES.get(code)
+    if not discount:
+        await msg.answer("❌ Промокод не найден или уже не действует.")
+        return
+    await state.clear()
+    rows = []
+    for months in (1, 3, 12):
+        price, _ = _stars_plan(months, discount)
+        rows.append([InlineKeyboardButton(
+            text=f"{months} мес. · {price} ⭐ · −{discount}%",
+            callback_data=f"promopay:{months}:{discount}",
+        )])
+    rows.append([InlineKeyboardButton(text="‹ Назад", callback_data="buy")])
+    await msg.answer(
+        f"✅ Промокод принят. Скидка <b>{discount}%</b>.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+
+@router.callback_query(F.data.startswith("promopay:"))
+async def cb_pay_promo(cb: CallbackQuery, bot: Bot) -> None:
+    _, months_raw, discount_raw = cb.data.split(":", 2)
+    months, discount = int(months_raw), int(discount_raw)
+    if months not in (1, 3, 12) or discount not in PROMO_CODES.values():
+        await cb.answer("Промокод устарел", show_alert=True)
+        return
+    price, label = _stars_plan(months, discount)
+    await bot.send_invoice(
+        chat_id=cb.from_user.id,
+        title=SUBSCRIPTION_TITLE,
+        description=f"{SUBSCRIPTION_DESCRIPTION} Скидка {discount}%.",
+        payload=f"promo_{cb.from_user.id}_{months}_{discount}",
+        currency="XTR",
         prices=[LabeledPrice(label=label, amount=price)],
     )
     await cb.answer()
@@ -448,15 +506,18 @@ async def pre_checkout(query: PreCheckoutQuery) -> None:
         kind = parts[0]
         payload_user_id = int(parts[1])
         months = int(parts[3] if kind == "gift" else parts[2])
+        discount = int(parts[3]) if kind == "promo" else 0
     except (IndexError, ValueError):
-        kind, payload_user_id, months = "", 0, 0
-    expected_price = _stars_plan(months)[0] if months in (1, 3, 12) else -1
+        kind, payload_user_id, months, discount = "", 0, 0, 0
+    promo_valid = kind != "promo" or discount in PROMO_CODES.values()
+    expected_price = _stars_plan(months, discount)[0] if months in (1, 3, 12) else -1
     is_valid = (
         query.currency == "XTR"
         and query.total_amount == expected_price
         and payload_user_id == query.from_user.id
         and months in (1, 3, 12)
-        and kind in ("sub", "gift")
+        and kind in ("sub", "gift", "promo")
+        and promo_valid
     )
     await query.answer(
         ok=is_valid,
@@ -469,7 +530,7 @@ async def payment_success(msg: Message, bot: Bot) -> None:
     p = msg.successful_payment
     try:
         parts = p.invoice_payload.split("_")
-        months = int(parts[-1])
+        months = int(parts[3] if parts[0] == "gift" else parts[2])
         target_id = int(parts[2]) if parts[0] == "gift" else msg.from_user.id
     except (ValueError, IndexError):
         months = 1

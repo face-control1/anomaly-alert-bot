@@ -18,6 +18,15 @@ ADMIN_IDS: list[int] = [
 SUBSCRIPTION_PRICE_STARS: int = int(os.getenv("SUBSCRIPTION_PRICE_STARS", "250"))
 SUBSCRIPTION_PERIOD_DAYS: int = 30          # длительность подписки
 TRIAL_PERIOD_HOURS: int = 24                # пробный период
+PROMO_CODES: dict[str, int] = {}
+for item in os.getenv("PROMO_CODES", "WELCOME10:10").split(","):
+    try:
+        code, discount = item.split(":", 1)
+        discount_value = int(discount)
+        if code.strip() and 1 <= discount_value <= 90:
+            PROMO_CODES[code.strip().upper()] = discount_value
+    except (ValueError, TypeError):
+        continue
 
 SUBSCRIPTION_TITLE = "📈 AnomalyAlert — Подписка на 30 дней"
 SUBSCRIPTION_DESCRIPTION = (

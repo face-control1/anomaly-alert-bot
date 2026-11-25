@@ -76,6 +76,7 @@ def buy_menu_kb() -> InlineKeyboardMarkup:
             callback_data="pay_stars:12",
         )],
         [InlineKeyboardButton(text="🎁 Подарить подписку", callback_data="gift_subscription")],
+        [InlineKeyboardButton(text="🏷 Ввести промокод", callback_data="promo_code")],
     ])
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
