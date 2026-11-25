@@ -109,9 +109,20 @@ def init_db() -> None:
                     exchange    TEXT NOT NULL DEFAULT 'MOEX',
                     alert_type  TEXT NOT NULL,
                     headline    TEXT,
-                    created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                    created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()),
+                    signal_price DOUBLE PRECISION,
+                    direction INTEGER NOT NULL DEFAULT 0,
+                    outcome_15m_pct DOUBLE PRECISION,
+                    evaluated_at DOUBLE PRECISION
                 )
             """)
+            for statement in (
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS signal_price DOUBLE PRECISION",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS direction INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS outcome_15m_pct DOUBLE PRECISION",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS evaluated_at DOUBLE PRECISION",
+            ):
+                cur.execute(statement)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id       BIGINT PRIMARY KEY REFERENCES users(user_id),
@@ -157,7 +168,11 @@ def init_db() -> None:
                     exchange    TEXT NOT NULL DEFAULT 'MOEX',
                     alert_type  TEXT NOT NULL,
                     headline    TEXT,
-                    created_at  REAL NOT NULL DEFAULT (unixepoch())
+                    created_at  REAL NOT NULL DEFAULT (unixepoch()),
+                    signal_price REAL,
+                    direction INTEGER NOT NULL DEFAULT 0,
+                    outcome_15m_pct REAL,
+                    evaluated_at REAL
                 );
                 CREATE TABLE IF NOT EXISTS user_settings (
                     user_id       INTEGER PRIMARY KEY REFERENCES users(user_id),
@@ -168,6 +183,17 @@ def init_db() -> None:
                     paused        INTEGER NOT NULL DEFAULT 0
                 );
             """)
+            existing_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(alerts_log)").fetchall()
+            }
+            for name, definition in (
+                ("signal_price", "REAL"),
+                ("direction", "INTEGER NOT NULL DEFAULT 0"),
+                ("outcome_15m_pct", "REAL"),
+                ("evaluated_at", "REAL"),
+            ):
+                if name not in existing_columns:
+                    conn.execute(f"ALTER TABLE alerts_log ADD COLUMN {name} {definition}")
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
 
 
@@ -311,22 +337,102 @@ def get_all_active_user_ids() -> list[int]:
             ).fetchall()]
 
 
-def log_alert(ticker: str, exchange: str, alert_type: str, headline: str | None = None) -> None:
+def log_alert(
+    ticker: str,
+    exchange: str,
+    alert_type: str,
+    headline: str | None = None,
+    signal_price: float | None = None,
+    direction: int = 0,
+) -> None:
     """ÃÂÃÂÃÂÃÂ°ÃÂÃÂ¿ÃÂÃÂ¸ÃÂÃÂÃÂÃÂ°ÃÂÃÂÃÂÃÂ ÃÂÃÂ°ÃÂÃÂ»ÃÂÃÂµÃÂÃÂÃÂÃÂ ÃÂÃÂ² ÃÂÃÂ»ÃÂÃÂ¾ÃÂÃÂ³ (ÃÂÃÂ´ÃÂÃÂ»ÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂ°ÃÂÃÂÃÂÃÂ¸ÃÂÃÂÃÂÃÂÃÂÃÂ¸ÃÂÃÂºÃÂÃÂ¸ /admin)."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO alerts_log (ticker, exchange, alert_type, headline) "
-                f"VALUES ({PH}, {PH}, {PH}, {PH})",
-                (ticker, exchange, alert_type, headline)
+                f"INSERT INTO alerts_log (ticker, exchange, alert_type, headline, signal_price, direction) "
+                f"VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH})",
+                (ticker, exchange, alert_type, headline, signal_price, direction)
             )
             cur.close()
         else:
             conn.execute(
-                "INSERT INTO alerts_log (ticker, exchange, alert_type, headline) VALUES (?, ?, ?, ?)",
-                (ticker, exchange, alert_type, headline)
+                "INSERT INTO alerts_log (ticker, exchange, alert_type, headline, signal_price, direction) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (ticker, exchange, alert_type, headline, signal_price, direction)
             )
+
+
+def get_pending_outcomes(limit: int = 100) -> list[dict]:
+    cutoff = datetime.now(timezone.utc).timestamp() - 15 * 60
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                f"SELECT id, ticker, signal_price, direction FROM alerts_log "
+                f"WHERE created_at <= {PH} AND signal_price > 0 AND outcome_15m_pct IS NULL "
+                f"ORDER BY created_at LIMIT {PH}",
+                (cutoff, limit),
+            )
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(
+                "SELECT id, ticker, signal_price, direction FROM alerts_log "
+                "WHERE created_at <= ? AND signal_price > 0 AND outcome_15m_pct IS NULL "
+                "ORDER BY created_at LIMIT ?",
+                (cutoff, limit),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def save_alert_outcome(alert_id: int, outcome_pct: float) -> None:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"UPDATE alerts_log SET outcome_15m_pct = {PH}, evaluated_at = {PH} WHERE id = {PH}",
+                (outcome_pct, now_ts, alert_id),
+            )
+            cur.close()
+        else:
+            conn.execute(
+                "UPDATE alerts_log SET outcome_15m_pct = ?, evaluated_at = ? WHERE id = ?",
+                (outcome_pct, now_ts, alert_id),
+            )
+
+
+def get_signal_performance() -> dict:
+    with get_conn() as conn:
+        query = (
+            "SELECT outcome_15m_pct, direction FROM alerts_log "
+            "WHERE outcome_15m_pct IS NOT NULL ORDER BY evaluated_at DESC LIMIT 500"
+        )
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(query)
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(query).fetchall()
+    if not rows:
+        return {"evaluated": 0, "confirmed": 0, "confirmation_rate": 0.0, "avg_move": 0.0}
+    confirmed = 0
+    moves = []
+    for outcome, direction in rows:
+        outcome = float(outcome)
+        moves.append(outcome)
+        if (direction > 0 and outcome > 0) or (direction < 0 and outcome < 0):
+            confirmed += 1
+        elif direction == 0 and abs(outcome) >= 0.5:
+            confirmed += 1
+    return {
+        "evaluated": len(rows),
+        "confirmed": confirmed,
+        "confirmation_rate": round(confirmed / len(rows) * 100, 1),
+        "avg_move": round(sum(abs(x) for x in moves) / len(moves), 2),
+    }
 
 
 def get_recent_alerts(limit: int = 10) -> list[dict]:

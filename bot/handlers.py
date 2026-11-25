@@ -48,6 +48,7 @@ from database.db import (
     get_user_settings,
     toggle_user_setting,
     get_recent_alerts,
+    get_signal_performance,
 )
 from bot.keyboards import (
     main_menu_kb,
@@ -176,6 +177,27 @@ async def cb_recent_alerts(cb: CallbackQuery) -> None:
             ticker = html.escape(str(alert["ticker"]))
             lines.append(f"{icon} <b>{ticker}</b> · {headline}")
         text = "\n".join(lines)
+    await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data == "signal_stats")
+async def cb_signal_stats(cb: CallbackQuery) -> None:
+    stats = get_signal_performance()
+    if not stats["evaluated"]:
+        text = (
+            "<b>📈 Качество сигналов</b>\n\n"
+            "Статистика собирается. Первый результат появляется через 15 минут после сигнала."
+        )
+    else:
+        text = (
+            "<b>📈 Качество сигналов</b>\n\n"
+            f"Проверено: <b>{stats['evaluated']}</b>\n"
+            f"Подтвердились: <b>{stats['confirmed']}</b>\n"
+            f"Точность направления: <b>{stats['confirmation_rate']}%</b>\n"
+            f"Среднее движение за 15 минут: <b>{stats['avg_move']}%</b>\n\n"
+            "Метрика обновляется автоматически и не является гарантией будущего результата."
+        )
     await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
     await cb.answer()
 

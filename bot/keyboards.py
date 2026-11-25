@@ -9,6 +9,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📡 Лента сигналов", callback_data="recent_alerts"),
          InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
+        [InlineKeyboardButton(text="📈 Качество сигналов", callback_data="signal_stats")],
         [InlineKeyboardButton(text="🎛 Настроить алерты", callback_data="settings")],
         [InlineKeyboardButton(text="💎 Подписка", callback_data="status"),
          InlineKeyboardButton(text="🚀 Купить", callback_data="buy")],

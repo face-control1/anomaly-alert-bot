@@ -58,7 +58,15 @@ async def make_alert_sender(bot: Bot):
         for alert in alerts:
             # Логируем алерт
             try:
-                log_alert(alert.ticker, alert.exchange, alert.alert_type, alert.headline)
+                direction = 1 if alert.price_change_1m_pct > 0 else (-1 if alert.price_change_1m_pct < 0 else 0)
+                log_alert(
+                    alert.ticker,
+                    alert.exchange,
+                    alert.alert_type,
+                    alert.headline,
+                    signal_price=alert.current_price,
+                    direction=direction,
+                )
             except Exception:
                 pass
 
@@ -215,6 +223,10 @@ async def main() -> None:
     scanner.start()
     logger.info("Сканер рынка запущен (интервал %d сек)", SCAN_INTERVAL)
 
+    from market.outcome_tracker import OutcomeTracker
+    outcome_tracker = OutcomeTracker()
+    outcome_tracker.start()
+
     # Запускаем детектор крупных заявок
     orderbook_watcher = None
     try:
@@ -270,6 +282,7 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         scanner.stop()
+        outcome_tracker.stop()
         if orderbook_watcher:
             await orderbook_watcher.stop()
         if corp_watcher:
