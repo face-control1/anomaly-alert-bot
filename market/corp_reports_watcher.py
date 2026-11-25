@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import ssl
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Coroutine, Optional, Set
 
 import aiohttp
+import certifi
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +253,9 @@ class CorpReportsWatcher:
             await self._callback(alert)
 
     async def run(self) -> None:
-        async with aiohttp.ClientSession() as session:
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
+        async with aiohttp.ClientSession(connector=connector) as session:
             # Первый запуск: устанавливаем окно на max_report_age назад
             self._last_check_utc = datetime.now(timezone.utc) - self._max_age
 

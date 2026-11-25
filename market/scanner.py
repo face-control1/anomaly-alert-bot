@@ -17,6 +17,12 @@ import time
 from datetime import datetime
 from typing import Optional
 
+from config import (
+    VOLUME_SPIKE_MULTIPLIER,
+    PRICE_CHANGE_THRESHOLD_PCT,
+    VOLATILITY_SIGMA,
+)
+
 from market.moex import (
     get_all_moex_tickers,
     get_moex_marketdata,
@@ -29,16 +35,16 @@ from market.anomaly import Alert, AlertCooldownFilter, run_all_detectors
 logger = logging.getLogger(__name__)
 
 # ─── Настройки детекторов ────────────────────────────────────────────────────
-VOLUME_MULTIPLIER = 3.0
-PRICE_THRESHOLD_PCT = 3.0
-BOLLINGER_SIGMA = 2.5
+VOLUME_MULTIPLIER = VOLUME_SPIKE_MULTIPLIER
+PRICE_THRESHOLD_PCT = PRICE_CHANGE_THRESHOLD_PCT
+BOLLINGER_SIGMA = VOLATILITY_SIGMA
 CANDLES_N = 30           # количество минутных свечей для анализа
 SCAN_BOARD = "TQBR"
-TICKER_DELAY = 0.1       # пауза между тикерами (сек)
+MAX_CONCURRENT_REQUESTS = 8
 
 # ─── Freshness watermark ────────────────────────────────────────────────────
 # Максимальный возраст котировки (мс): данные старше — пропускаем
-STALE_AFTER_MS = 5_000   # 5 секунд
+STALE_AFTER_MS = 120_000  # полный проход по рынку может занимать больше минуты
 
 # ─── Post-filter: минимальный размер ────────────────────────────────────────
 # Алерт игнорируется, если объём < MIN_VOLUME_LOTS лотов
@@ -84,6 +90,7 @@ class MarketScanner:
 
         # Время последнего обновления котировок (monotonic ms) по тикеру
         self._data_received_at: dict[str, float] = {}
+        self._request_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
     def start(self) -> None:
         if not self._running:
@@ -132,20 +139,22 @@ class MarketScanner:
         update_weekly = (self._cycle % self._weekly_every == 1)
 
         # Шаги 3–4: Pre-Filter + Detectors
-        raw_alerts: list[Alert] = []
-        for ticker in tickers:
+        async def scan_one(ticker: str) -> list[Alert]:
             try:
-                alerts = await self._scan_ticker(
-                    ticker,
-                    marketdata_map.get(ticker, {}),
-                    securities_map.get(ticker, {}),
-                    update_weekly=update_weekly,
-                    received_at_ms=self._data_received_at.get(ticker, fetch_time_ms),
-                )
-                raw_alerts.extend(alerts)
+                async with self._request_semaphore:
+                    return await self._scan_ticker(
+                        ticker,
+                        marketdata_map.get(ticker, {}),
+                        securities_map.get(ticker, {}),
+                        update_weekly=update_weekly,
+                        received_at_ms=self._data_received_at.get(ticker, fetch_time_ms),
+                    )
             except Exception as exc:
-                logger.debug("Ошибка при сканировании %s: %s", ticker, exc)
-            await asyncio.sleep(TICKER_DELAY)
+                logger.warning("Ошибка при сканировании %s: %s", ticker, exc)
+                return []
+
+        results = await asyncio.gather(*(scan_one(ticker) for ticker in tickers))
+        raw_alerts = [alert for ticker_alerts in results for alert in ticker_alerts]
 
         # Шаг 5: Post-Filter (кулдаун + cross-combining)
         final_alerts = self._post_filter(raw_alerts)
@@ -172,14 +181,6 @@ class MarketScanner:
             return []
         last_price = float(last_price)
 
-        # Шаг 3: Freshness watermark
-        # Проверяем, насколько свежи данные, полученные от MOEX ISS
-        age_ms = time.monotonic() * 1000 - received_at_ms
-        if age_ms > self._stale_after_ms:
-            logger.debug("Freshness skip %s: age=%.0fms > stale_after=%.0fms",
-                         ticker, age_ms, self._stale_after_ms)
-            return []
-
         short_name = securities.get("SHORTNAME") or ticker
 
         # Минутные свечи
@@ -192,15 +193,6 @@ class MarketScanner:
         if last_volume < self._min_volume_lots:
             return []
 
-        # Weekly change (кеш)
-        if update_weekly or ticker not in self._weekly_cache:
-            try:
-                self._weekly_cache[ticker] = await get_weekly_change(ticker, last_price, SCAN_BOARD)
-            except Exception:
-                self._weekly_cache[ticker] = None
-
-        weekly_change = self._weekly_cache.get(ticker)
-
         # Шаг 4: Detectors
         alerts = run_all_detectors(
             ticker=ticker,
@@ -208,15 +200,24 @@ class MarketScanner:
             candles=candles,
             marketdata=marketdata,
             securities=securities,
-            weekly_change=weekly_change,
+            weekly_change=self._weekly_cache.get(ticker),
             volume_multiplier=VOLUME_MULTIPLIER,
             price_threshold_pct=PRICE_THRESHOLD_PCT,
             bollinger_sigma=BOLLINGER_SIGMA,
         )
 
-        # Проставляем метку received_at_ms в каждый алерт
+        # Недельную динамику загружаем только для реально сработавшего сигнала.
+        if alerts and (update_weekly or ticker not in self._weekly_cache):
+            try:
+                self._weekly_cache[ticker] = await get_weekly_change(ticker, last_price, SCAN_BOARD)
+            except Exception as exc:
+                logger.debug("Не удалось получить недельную динамику %s: %s", ticker, exc)
+                self._weekly_cache[ticker] = None
+
+        completed_at_ms = time.monotonic() * 1000
         for a in alerts:
-            a.received_at_ms = received_at_ms
+            a.received_at_ms = completed_at_ms
+            a.price_change_week_pct = self._weekly_cache.get(ticker)
 
         return alerts
 

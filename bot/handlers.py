@@ -40,6 +40,8 @@ from database.db import (
     add_favorite,
     remove_favorite,
     get_favorites,
+    record_payment,
+    get_payment_user_id,
 )
 from bot.keyboards import main_menu_kb, buy_menu_kb, back_kb, tickers_kb, favorites_kb
 
@@ -190,26 +192,42 @@ async def cb_buy(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "pay_stars")
 async def cb_pay_stars(cb: CallbackQuery, bot: Bot) -> None:
+    price = get_subscription_price()["stars"]
     await bot.send_invoice(
         chat_id=cb.from_user.id,
         title=SUBSCRIPTION_TITLE,
         description=SUBSCRIPTION_DESCRIPTION,
         payload=f"sub_{cb.from_user.id}",
         currency="XTR",   # Telegram Stars
-        prices=[LabeledPrice(label="Подписка 30 дней", amount=SUBSCRIPTION_PRICE_STARS)],
+        prices=[LabeledPrice(label="Подписка 30 дней", amount=price)],
     )
     await cb.answer()
 
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery) -> None:
-    await query.answer(ok=True)
+    expected_price = get_subscription_price()["stars"]
+    expected_payload = f"sub_{query.from_user.id}"
+    is_valid = (
+        query.currency == "XTR"
+        and query.total_amount == expected_price
+        and query.invoice_payload == expected_payload
+    )
+    await query.answer(
+        ok=is_valid,
+        error_message=None if is_valid else "Параметры платежа устарели. Откройте меню оплаты заново.",
+    )
 
 
 @router.message(F.successful_payment)
 async def payment_success(msg: Message) -> None:
     p = msg.successful_payment
-    activate_paid(msg.from_user.id, p.provider_payment_charge_id, p.total_amount)
+    charge_id = p.telegram_payment_charge_id
+    is_new = record_payment(msg.from_user.id, charge_id, p.total_amount, p.currency)
+    if is_new:
+        activate_paid(msg.from_user.id, 1)
+    else:
+        logger.warning("Повторный successful_payment проигнорирован: charge_id=%s", charge_id)
     await msg.answer(
         "✅ <b>Оплата прошла успешно!</b>\n\n"
         f"Вы оплатили <b>{p.total_amount} ⭐ Stars</b>.\n"
@@ -219,13 +237,19 @@ async def payment_success(msg: Message) -> None:
         parse_mode="HTML",
     )
     logger.info("Оплата от user_id=%d, charge_id=%s, stars=%d",
-                msg.from_user.id, p.provider_payment_charge_id, p.total_amount)
+                msg.from_user.id, charge_id, p.total_amount)
 
 
 @router.message(F.refunded_payment)
 async def payment_refund(msg: Message) -> None:
     p = msg.refunded_payment
-    deactivate_subscription(p.provider_payment_charge_id)
+    charge_id = p.telegram_payment_charge_id
+    user_id = get_payment_user_id(charge_id)
+    if user_id is None:
+        logger.error("Не найден пользователь для возврата Stars: charge_id=%s", charge_id)
+        await msg.answer("↩️ Возврат получен, но подписка требует ручной проверки. Напишите в поддержку.")
+        return
+    deactivate_subscription(user_id)
     await msg.answer(
         "↩️ Возврат Stars выполнен. Ваша подписка деактивирована.",
         reply_markup=main_menu_kb(),

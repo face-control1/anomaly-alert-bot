@@ -4,8 +4,11 @@ MOEX ISS API — получение рыночных данных.
 from __future__ import annotations
 
 import logging
+import asyncio
+import ssl
 from typing import Optional
 
+import certifi
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -17,18 +20,31 @@ _client: Optional[httpx.AsyncClient] = None
 def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(timeout=15.0)
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        _client = httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=10.0),
+            verify=ssl_context,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            headers={"User-Agent": "MoexHelpBot/1.0"},
+        )
     return _client
 
 
 async def fetch_json(url: str, params: dict | None = None) -> dict | None:
-    try:
-        r = await get_client().get(url, params=params)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        logger.debug("fetch_json error %s: %s", url, e)
-        return None
+    for attempt in range(1, 4):
+        try:
+            r = await get_client().get(url, params=params)
+            r.raise_for_status()
+            return r.json()
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+            if attempt == 3:
+                logger.warning("MOEX request failed after %d attempts: %s (%s)", attempt, url, exc)
+                return None
+            await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
+        except (ValueError, TypeError) as exc:
+            logger.warning("MOEX returned invalid JSON: %s (%s)", url, exc)
+            return None
+    return None
 
 
 async def get_all_moex_tickers(board: str = "TQBR") -> list[str]:

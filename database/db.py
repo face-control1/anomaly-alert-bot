@@ -403,7 +403,8 @@ def get_all_users() -> list[dict]:
     return result
 
 
-def record_payment(user_id: int, telegram_charge: str, amount: int, currency: str) -> None:
+def record_payment(user_id: int, telegram_charge: str, amount: int, currency: str) -> bool:
+    """Записать платёж один раз. Возвращает True только для нового charge id."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
@@ -412,13 +413,35 @@ def record_payment(user_id: int, telegram_charge: str, amount: int, currency: st
                 f"VALUES ({PH}, {PH}, {PH}, {PH}) ON CONFLICT (telegram_charge) DO NOTHING",
                 (user_id, telegram_charge, amount, currency)
             )
+            inserted = cur.rowcount == 1
             cur.close()
+            return inserted
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT OR IGNORE INTO payments (user_id, telegram_charge, amount, currency) "
                 "VALUES (?, ?, ?, ?)",
                 (user_id, telegram_charge, amount, currency)
             )
+            return cur.rowcount == 1
+
+
+def get_payment_user_id(telegram_charge: str) -> int | None:
+    """Найти владельца платежа для корректной обработки возврата Stars."""
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT user_id FROM payments WHERE telegram_charge = {PH} LIMIT 1",
+                (telegram_charge,),
+            )
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute(
+                "SELECT user_id FROM payments WHERE telegram_charge = ? LIMIT 1",
+                (telegram_charge,),
+            ).fetchone()
+    return int(row[0]) if row else None
 
 
 # Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ

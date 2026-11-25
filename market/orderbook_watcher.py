@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import ssl
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -17,6 +19,9 @@ from datetime import datetime
 from typing import Callable, Coroutine, Optional
 
 import aiohttp
+import certifi
+
+logger = logging.getLogger(__name__)
 
 # ─── Настройки ───────────────────────────────────────────────────────────────
 
@@ -357,14 +362,19 @@ class OrderbookWatcher:
 
     async def run(self) -> None:
         """Main polling loop. Запускается через start()."""
-        async with aiohttp.ClientSession() as session:
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
+        async with aiohttp.ClientSession(connector=connector) as session:
             self._session = session
             while self._running:
                 tasks = [
                     self._process_ticker(session, ticker, short_name)
                     for ticker, short_name in self.tickers
                 ]
-                await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                failures = sum(isinstance(result, Exception) for result in results)
+                if failures:
+                    logger.warning("Orderbook: %d/%d запросов завершились ошибкой", failures, len(tasks))
                 self._last_check_utc = datetime.utcnow()
                 await asyncio.sleep(self.poll_interval)
 
