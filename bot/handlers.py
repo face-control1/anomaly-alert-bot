@@ -7,7 +7,7 @@ import html
 from datetime import timezone
 
 from aiogram import Router, F, Bot
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.types import (
     Message, CallbackQuery,
     LabeledPrice, PreCheckoutQuery,
@@ -49,6 +49,8 @@ from database.db import (
     toggle_user_setting,
     get_recent_alerts,
     get_signal_performance,
+    register_referral,
+    get_referral_count,
 )
 from bot.keyboards import (
     main_menu_kb,
@@ -79,8 +81,13 @@ class AdminState(StatesGroup):
 # ─── /start ──────────────────────────────────────────────────────────────────
 
 @router.message(CommandStart())
-async def cmd_start(msg: Message) -> None:
+async def cmd_start(msg: Message, command: CommandObject) -> None:
     upsert_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
+    if command.args and command.args.startswith("ref_"):
+        try:
+            register_referral(msg.from_user.id, int(command.args[4:]))
+        except ValueError:
+            pass
     name = html.escape(msg.from_user.first_name or "трейдер")
     banner_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "moex-help-banner.png")
     if os.path.exists(banner_path):
@@ -199,6 +206,25 @@ async def cb_signal_stats(cb: CallbackQuery) -> None:
             "Метрика обновляется автоматически и не является гарантией будущего результата."
         )
     await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
+    await cb.answer()
+
+
+@router.callback_query(F.data == "referral")
+async def cb_referral(cb: CallbackQuery, bot: Bot) -> None:
+    me = await bot.get_me()
+    link = f"https://t.me/{me.username}?start=ref_{cb.from_user.id}"
+    invited = get_referral_count(cb.from_user.id)
+    text = (
+        "<b>🤝 Пригласить друга</b>\n\n"
+        f"По вашей ссылке уже зарегистрировались: <b>{invited}</b>\n\n"
+        "Отправьте ссылку знакомому инвестору:\n"
+        f"<code>{link}</code>"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📨 Поделиться", url=f"https://t.me/share/url?url={link}")],
+        [InlineKeyboardButton(text="‹ Главное меню", callback_data="main_menu")],
+    ])
+    await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await cb.answer()
 
 

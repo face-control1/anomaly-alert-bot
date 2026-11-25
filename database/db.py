@@ -68,13 +68,15 @@ def init_db() -> None:
                     user_id     BIGINT PRIMARY KEY,
                     username    TEXT,
                     first_name  TEXT,
-                    created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                    created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW()),
+                    referrer_id BIGINT
                 )
             """)
             try:
                 cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT")
             except Exception:
                 pass
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_id BIGINT")
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS subscriptions (
                     id          SERIAL PRIMARY KEY,
@@ -139,6 +141,8 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS users (
                     user_id     INTEGER PRIMARY KEY,
                     username    TEXT,
+                    first_name  TEXT,
+                    referrer_id INTEGER,
                     created_at  REAL NOT NULL DEFAULT (unixepoch())
                 );
                 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -194,6 +198,11 @@ def init_db() -> None:
             ):
                 if name not in existing_columns:
                     conn.execute(f"ALTER TABLE alerts_log ADD COLUMN {name} {definition}")
+            user_columns = {row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
+            if "first_name" not in user_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN first_name TEXT")
+            if "referrer_id" not in user_columns:
+                conn.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
 
 
@@ -213,6 +222,42 @@ def ensure_user(user_id: int, username: str | None = None, first_name: str | Non
                 "ON CONFLICT (user_id) DO UPDATE SET username = excluded.username, first_name = excluded.first_name",
                 (user_id, username, first_name)
             )
+
+
+def register_referral(user_id: int, referrer_id: int) -> bool:
+    if user_id == referrer_id:
+        return False
+    ensure_user(referrer_id)
+    ensure_user(user_id)
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"UPDATE users SET referrer_id = {PH} "
+                f"WHERE user_id = {PH} AND referrer_id IS NULL",
+                (referrer_id, user_id),
+            )
+            updated = cur.rowcount == 1
+            cur.close()
+            return updated
+        cur = conn.execute(
+            "UPDATE users SET referrer_id = ? WHERE user_id = ? AND referrer_id IS NULL",
+            (referrer_id, user_id),
+        )
+        return cur.rowcount == 1
+
+
+def get_referral_count(user_id: int) -> int:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"SELECT COUNT(*) FROM users WHERE referrer_id = {PH}", (user_id,))
+            count = cur.fetchone()[0]
+            cur.close()
+            return int(count)
+        return int(conn.execute(
+            "SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,)
+        ).fetchone()[0])
 
 
 def had_trial(user_id: int) -> bool:
