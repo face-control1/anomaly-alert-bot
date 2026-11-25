@@ -280,9 +280,8 @@ def had_trial(user_id: int) -> bool:
 
 
 def activate_trial(user_id: int) -> bool:
-    """ÃÂÃÂÃÂÃÂºÃÂÃÂÃÂÃÂ¸ÃÂÃÂ²ÃÂÃÂ¸ÃÂÃÂÃÂÃÂ¾ÃÂÃÂ²ÃÂÃÂ°ÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂ¸ÃÂÃÂ°ÃÂÃÂ». ÃÂÃÂÃÂÃÂµÃÂÃÂÃÂÃÂ½ÃÂÃÂÃÂÃÂÃÂÃÂ False ÃÂÃÂµÃÂÃÂÃÂÃÂ»ÃÂÃÂ¸ ÃÂÃÂÃÂÃÂÃÂÃÂ¸ÃÂÃÂ°ÃÂÃÂ» ÃÂÃÂÃÂÃÂ¶ÃÂÃÂµ ÃÂÃÂ±ÃÂÃÂÃÂÃÂ»."""
-    if had_trial(user_id):
-        return False
+    """Activate the 24-hour trial once, safely under concurrent clicks."""
+    ensure_user(user_id)
     now = datetime.now(timezone.utc)
     expires = now + timedelta(hours=TRIAL_PERIOD_HOURS)
     with get_conn() as conn:
@@ -290,17 +289,25 @@ def activate_trial(user_id: int) -> bool:
             cur = conn.cursor()
             cur.execute(
                 f"INSERT INTO subscriptions (user_id, type, started_at, expires_at) "
-                f"VALUES ({PH}, 'trial', {PH}, {PH})",
-                (user_id, now.timestamp(), expires.timestamp())
+                f"SELECT {PH}, 'trial', {PH}, {PH} "
+                f"WHERE NOT EXISTS ("
+                f"SELECT 1 FROM subscriptions WHERE user_id = {PH} AND type = 'trial'"
+                f") RETURNING id",
+                (user_id, now.timestamp(), expires.timestamp(), user_id),
             )
+            activated = cur.fetchone() is not None
             cur.close()
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT INTO subscriptions (user_id, type, started_at, expires_at) "
-                "VALUES (?, 'trial', ?, ?)",
-                (user_id, now.timestamp(), expires.timestamp())
+                "SELECT ?, 'trial', ?, ? "
+                "WHERE NOT EXISTS ("
+                "SELECT 1 FROM subscriptions WHERE user_id = ? AND type = 'trial'"
+                ")",
+                (user_id, now.timestamp(), expires.timestamp(), user_id),
             )
-    return True
+            activated = cur.rowcount == 1
+    return activated
 
 
 def get_subscription_info(user_id: int) -> dict | None:

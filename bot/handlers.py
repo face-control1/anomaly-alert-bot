@@ -259,31 +259,31 @@ async def cb_status(cb: CallbackQuery) -> None:
 @router.callback_query(F.data == "trial")
 async def cb_trial(cb: CallbackQuery) -> None:
     uid = cb.from_user.id
-    if has_active_subscription(uid):
-        await cb.answer("У вас уже есть активная подписка!", show_alert=True)
-        return
-    if had_trial(uid):
-        await cb.answer(
-            "Пробный период уже был использован. Оформите платную подписку.",
-            show_alert=True,
-        )
-        return
-    if not activate_trial(uid):
+    await cb.answer("Активирую пробный период…")
+    try:
+        upsert_user(uid, cb.from_user.username, cb.from_user.first_name)
+        if has_active_subscription(uid):
+            text = "✅ <b>У вас уже есть активная подписка.</b>"
+        elif had_trial(uid) or not activate_trial(uid):
+            text = (
+                "⛔ <b>Пробный период уже был использован.</b>\n\n"
+                "Для продолжения оформите платную подписку."
+            )
+        else:
+            text = (
+                "🎉 <b>Пробный период на 24 часа активирован!</b>\n\n"
+                "Вы будете получать алерты об аномалиях на бирже.\n"
+                "После окончания пробного периода можно оформить подписку."
+            )
+        await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
+    except Exception:
+        logger.exception("Trial activation failed for user_id=%s", uid)
         await cb.message.edit_text(
-            "⛔ Пробный период уже был использован.\n\nДля продолжения оформите платную подписку.",
+            "⚠️ <b>Не удалось активировать пробный период.</b>\n\n"
+            "Пожалуйста, повторите позже или напишите в поддержку.",
             reply_markup=back_kb(),
             parse_mode="HTML",
         )
-        await cb.answer()
-        return
-    await cb.message.edit_text(
-        "🎉 <b>Пробный период на 24 часа активирован!</b>\n\n"
-        "Вы будете получать алерты об аномалиях на бирже.\n"
-        "После окончания пробного периода оформите платную подписку.",
-        reply_markup=back_kb(),
-        parse_mode="HTML",
-    )
-    await cb.answer("Пробный период активирован!")
 
 
 # ─── Покупка подписки ─────────────────────────────────────────────────────────
