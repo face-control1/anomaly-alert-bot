@@ -54,7 +54,6 @@ from database.db import (
     register_referral,
     get_referral_count,
     get_promo_codes,
-    create_admin_login_code,
 )
 from bot.keyboards import (
     main_menu_kb,
@@ -814,19 +813,6 @@ async def cmd_admin(msg: Message) -> None:
     await msg.answer(
         _admin_panel_text(),
         reply_markup=_admin_kb(),
-        parse_mode="HTML",
-    )
-
-
-@router.message(Command("weblogin"))
-async def cmd_web_login(msg: Message) -> None:
-    if msg.from_user.id not in ADMIN_IDS:
-        return
-    code = create_admin_login_code(msg.from_user.id)
-    await msg.answer(
-        "🔐 <b>Вход в веб-админку</b>\n\n"
-        f"Одноразовый код: <code>{code}</code>\n\n"
-        "Код действует 5 минут и сгорает сразу после входа. Никому его не передавайте.",
         parse_mode="HTML",
     )
 

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
@@ -14,7 +16,7 @@ from database.db import (
     activate_paid,
     deactivate_subscription,
     disable_promo_code,
-    exchange_admin_login_code,
+    create_admin_session,
     get_admin_audit,
     get_all_active_user_ids,
     get_all_users,
@@ -133,12 +135,22 @@ def handle_admin_request(handler) -> bool:
             _send(handler, 429, {"error": "too_many_attempts"})
             return True
         try:
-            code = str(_read_json(handler).get("code", ""))
-            result = exchange_admin_login_code(code, ADMIN_IDS)
-            if not result:
-                _send(handler, 401, {"error": "invalid_or_expired_code"})
+            data = _read_json(handler)
+            expected_user = os.getenv("ADMIN_WEB_USERNAME", "admin")
+            expected_password = os.getenv("ADMIN_WEB_PASSWORD", "")
+            username = str(data.get("username", ""))
+            password = str(data.get("password", ""))
+            if not expected_password:
+                _send(handler, 503, {"error": "web_login_not_configured"})
                 return True
-            token, admin_id = result
+            if not (hmac.compare_digest(username, expected_user) and hmac.compare_digest(password, expected_password)):
+                _send(handler, 401, {"error": "invalid_credentials"})
+                return True
+            admin_id = int(os.getenv("ADMIN_WEB_OWNER_ID", "5434913402"))
+            if admin_id not in ADMIN_IDS:
+                _send(handler, 403, {"error": "admin_not_allowed"})
+                return True
+            token = create_admin_session(admin_id)
             log_admin_action(admin_id, "web_login", "Web admin session created")
             _send(handler, 200, {"token": token, "admin_id": admin_id, "expires_in": 43200})
         except Exception:

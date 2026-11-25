@@ -1259,6 +1259,27 @@ def verify_admin_session(token: str) -> int | None:
     return int(row[0]) if row else None
 
 
+def create_admin_session(user_id: int, ttl_hours: int = 12) -> str:
+    """Create a web session after credentials have been verified."""
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    now = datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO admin_sessions (token_hash, user_id, expires_at) VALUES ({PH}, {PH}, {PH})",
+                (digest, user_id, now + ttl_hours * 3600),
+            )
+            cur.close()
+        else:
+            conn.execute(
+                "INSERT INTO admin_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                (digest, user_id, now + ttl_hours * 3600),
+            )
+    return token
+
+
 def log_admin_action(admin_id: int, action: str, details: str = "") -> None:
     with get_conn() as conn:
         if USE_POSTGRES:
