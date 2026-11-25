@@ -40,6 +40,8 @@ VOLUME_SPIKE_MULTIPLIER: float = float(os.getenv("VOLUME_SPIKE_MULTIPLIER", "3.0
 PRICE_CHANGE_THRESHOLD_PCT: float = float(os.getenv("PRICE_CHANGE_THRESHOLD_PCT", "3.0"))
 # Ширина BB-полосы (σ) для сигнала волатильности
 VOLATILITY_SIGMA: float = float(os.getenv("VOLATILITY_SIGMA", "2.5"))
+# Минимальный денежный оборот минутной свечи для сигнала
+MIN_SIGNAL_VALUE_RUB: float = float(os.getenv("MIN_SIGNAL_VALUE_RUB", "250000"))
 
 # Количество баров истории для расчёта скользящих средних
 HISTORY_BARS: int = 20

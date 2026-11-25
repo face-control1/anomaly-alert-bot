@@ -12,6 +12,7 @@ from __future__ import annotations
 import statistics
 import time
 import html
+from config import MIN_SIGNAL_VALUE_RUB
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -200,7 +201,10 @@ def detect_volume_spike(
         return None
 
     last_vol = _safe_float(candles[-1].get("volume"))
+    last_value = _safe_float(candles[-1].get("value"))
     if last_vol < MIN_VOLUME_LOTS:
+        return None
+    if last_value < MIN_SIGNAL_VALUE_RUB:
         return None
 
     median_vol, iqr_vol, sigma_vol = _robust_z(volumes)
@@ -243,7 +247,7 @@ def detect_volume_spike(
         details=f"Текущий объём: {int(last_vol):,} лот | Медиана: {int(median_vol):,} лот",
         current_price=current_price,
         volume_1m=int(last_vol),
-        value_1m=last_vol * current_price,
+        value_1m=last_value,
         price_change_1m_pct=price_change_1m,
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
@@ -296,8 +300,9 @@ def detect_price_move(
     prev_price = _safe_float(securities.get("PREVPRICE"))
     price_change_day = round((current_price - prev_price) / prev_price * 100, 2) if prev_price else 0.0
     volume = _safe_float(last.get("volume"))
+    value = _safe_float(last.get("value"))
 
-    if volume < MIN_VOLUME_LOTS:
+    if volume < MIN_VOLUME_LOTS or value < MIN_SIGNAL_VALUE_RUB:
         return None
 
     direction = "📈 Рост" if pct > 0 else "📉 Падение"
@@ -313,7 +318,7 @@ def detect_price_move(
         details=f"Открытие: {open_price:.2f} ₽ → Закрытие: {close_price:.2f} ₽",
         current_price=current_price,
         volume_1m=int(volume),
-        value_1m=volume * current_price,
+        value_1m=value,
         price_change_1m_pct=round(pct, 2),
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
@@ -359,11 +364,12 @@ def detect_bollinger_break(
     close_price = _safe_float(last.get("close"))
     open_price = _safe_float(last.get("open"))
     volume = _safe_float(last.get("volume"))
+    value = _safe_float(last.get("value"))
 
     if lower < close_price < upper:
         return None
 
-    if volume < MIN_VOLUME_LOTS:
+    if volume < MIN_VOLUME_LOTS or value < MIN_SIGNAL_VALUE_RUB:
         return None
 
     current_price = _safe_float(marketdata.get("LAST")) or close_price
@@ -386,7 +392,7 @@ def detect_bollinger_break(
         details=f"Цена: {close_price:.2f} ₽ | Полоса: {band_val:.2f} ₽ | Медиана: {band_ref:.2f} ₽",
         current_price=current_price,
         volume_1m=int(volume),
-        value_1m=volume * current_price,
+        value_1m=value,
         price_change_1m_pct=price_change_1m,
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,

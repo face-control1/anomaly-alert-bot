@@ -21,6 +21,7 @@ from config import (
     VOLUME_SPIKE_MULTIPLIER,
     PRICE_CHANGE_THRESHOLD_PCT,
     VOLATILITY_SIGMA,
+    MIN_SIGNAL_VALUE_RUB,
 )
 
 from market.moex import (
@@ -218,6 +219,9 @@ class MarketScanner:
         # Post-filter min_size (быстрая проверка до детекторов)
         last_volume = float(candles[-1].get("volume") or 0)
         if last_volume < self._min_volume_lots:
+            return []
+        last_value = float(candles[-1].get("value") or 0)
+        if last_value < MIN_SIGNAL_VALUE_RUB:
             return []
 
         # Шаг 4: Detectors

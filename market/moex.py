@@ -7,6 +7,7 @@ import logging
 import asyncio
 import ssl
 import os
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import certifi
@@ -107,7 +108,20 @@ async def get_moex_candles(
         return []
     rows = data.get("candles", {}).get("data", [])
     cols = data.get("candles", {}).get("columns", ["open", "close", "high", "low", "value", "volume", "begin", "end"])
-    return [dict(zip(cols, r)) for r in rows]
+    # iss.reverse=true возвращает новые свечи первыми. Детекторы ожидают
+    # хронологический порядок, где последняя свеча — самая свежая.
+    candles = [dict(zip(cols, r)) for r in rows[: n_bars + 2]][::-1]
+
+    # Не анализируем ещё не закрывшуюся минуту: её объём создаёт ложные сравнения.
+    if interval == 1 and candles:
+        try:
+            candle_end = datetime.fromisoformat(str(candles[-1]["end"]))
+            now_msk = datetime.now(timezone(timedelta(hours=3))).replace(tzinfo=None)
+            if candle_end > now_msk:
+                candles.pop()
+        except (KeyError, TypeError, ValueError):
+            pass
+    return candles[-n_bars:]
 
 
 async def get_moex_candles_weekly(ticker: str, board: str = "TQBR") -> list[dict]:
@@ -131,7 +145,7 @@ async def get_weekly_change(ticker: str, current_price: float, board: str = "TQB
     candles = await get_moex_candles_weekly(ticker, board)
     if len(candles) < 2:
         return None
-    week_ago_close = candles[-1].get("close") or candles[-1].get("open")
+    week_ago_close = candles[-2].get("close") or candles[-2].get("open")
     if not week_ago_close:
         return None
     return round((current_price - float(week_ago_close)) / float(week_ago_close) * 100, 2)

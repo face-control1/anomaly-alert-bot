@@ -27,3 +27,5 @@ services:
         value: "3.0"
       - key: VOLATILITY_SIGMA
         value: "2.5"
+      - key: MIN_SIGNAL_VALUE_RUB
+        value: "250000"
