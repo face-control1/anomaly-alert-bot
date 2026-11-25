@@ -47,6 +47,9 @@ class Alert:
     price_change_1m_pct: float = 0.0  # изменение за минуту %
     price_change_day_pct: float = 0.0 # изменение за день %
     price_change_week_pct: Optional[float] = None  # изменение за неделю %
+    score: int = 50
+    volume_ratio: float = 0.0
+    trigger_reason: str = ""
     alert_time: str = field(default_factory=lambda: datetime.now().strftime("%H:%M:%S"))
 
     # Метка времени получения события (мс) — для Freshness-фильтра
@@ -71,12 +74,21 @@ class Alert:
         short_name = html.escape(self.short_name)
         headline = html.escape(self.headline)
         details = html.escape(self.details)
+        reason = html.escape(self.trigger_reason or self.headline)
+        if self.score >= 80:
+            score_badge = "🔴 сильный"
+        elif self.score >= 60:
+            score_badge = "🟡 заметный"
+        else:
+            score_badge = "🟢 умеренный"
         return (
             f"{self.emoji} <b>{ticker}</b>  ·  {short_name}\n"
             f"<code>{self.exchange}  |  {self.alert_time} МСК</code>\n"
             f"━━━━━━━━━━━━━━\n"
             f"<b>{headline}</b>\n"
             f"{details}\n\n"
+            f"🎯 Рейтинг: <b>{self.score}/100</b> · {score_badge}\n"
+            f"💡 Почему: {reason}\n"
             f"💰 <b>{self.current_price:,.2f} ₽</b>\n"
             f"📊 {self.volume_1m:,} лот"
             + (f" / {self.value_1m/1_000_000:.2f}M ₽" if self.value_1m > 0 else "")
@@ -94,6 +106,18 @@ def _safe_float(val, default: float = 0.0) -> float:
         return float(val) if val is not None else default
     except (TypeError, ValueError):
         return default
+
+
+def _is_opening_auction_noise(candle: dict) -> bool:
+    """The first ten minutes have structurally incomparable auction volume."""
+    raw = candle.get("begin") or candle.get("time")
+    if not raw:
+        return False
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return value.hour == 10 and value.minute < 10
+    except (TypeError, ValueError):
+        return False
 
 
 def _robust_z(values: list[float]) -> tuple[float, float, float]:
@@ -167,6 +191,9 @@ class AlertCooldownFilter:
                     price_change_1m_pct=primary.price_change_1m_pct,
                     price_change_day_pct=primary.price_change_day_pct,
                     price_change_week_pct=primary.price_change_week_pct,
+                    score=min(100, max(a.score for a in ticker_alerts) + 12),
+                    volume_ratio=primary.volume_ratio,
+                    trigger_reason="одновременно сработали несколько независимых индикаторов",
                     alert_time=primary.alert_time,
                     received_at_ms=primary.received_at_ms,
                 )
@@ -251,6 +278,9 @@ def detect_volume_spike(
         price_change_1m_pct=price_change_1m,
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
+        score=min(100, max(40, round(42 + min(ratio, 10) * 5 + min(abs(price_change_1m), 5) * 3))),
+        volume_ratio=round(ratio, 2),
+        trigger_reason=f"объём в {ratio:.1f}× выше медианы при обороте {last_value / 1_000_000:.2f} млн ₽",
     )
 
 
@@ -322,6 +352,8 @@ def detect_price_move(
         price_change_1m_pct=round(pct, 2),
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
+        score=min(100, max(45, round(50 + abs(pct) * 8 + min(value / 1_000_000, 10)))),
+        trigger_reason=f"движение {pct:+.2f}% превысило динамический порог {dynamic_threshold:.2f}%",
     )
 
 
@@ -396,6 +428,8 @@ def detect_bollinger_break(
         price_change_1m_pct=price_change_1m,
         price_change_day_pct=price_change_day,
         price_change_week_pct=weekly_change,
+        score=min(100, max(45, round(55 + abs(close_price - band_val) / max(band_ref, 0.01) * 1000))),
+        trigger_reason=f"цена вышла {direction} при обороте {value / 1_000_000:.2f} млн ₽",
     )
 
 
@@ -410,6 +444,8 @@ def run_all_detectors(
     price_threshold_pct: float = 3.0,
     bollinger_sigma: float = 2.5,
 ) -> list[Alert]:
+    if not candles or _is_opening_auction_noise(candles[-1]):
+        return []
     alerts: list[Alert] = []
     for fn in (detect_volume_spike, detect_price_move, detect_bollinger_break):
         try:

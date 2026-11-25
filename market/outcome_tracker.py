@@ -1,4 +1,4 @@
-"""Оценивает движение цены через 15 минут после каждого сигнала."""
+"""Оценивает движение цены через 5, 15, 30 и 60 минут после сигнала."""
 from __future__ import annotations
 
 import asyncio
@@ -17,18 +17,20 @@ class OutcomeTracker:
         self._task: asyncio.Task | None = None
 
     async def _pass(self) -> None:
-        pending = get_pending_outcomes()
+        pending_by_horizon = {minutes: get_pending_outcomes(minutes) for minutes in (5, 15, 30, 60)}
+        pending = [row for rows in pending_by_horizon.values() for row in rows]
         if not pending:
             return
         tickers = sorted({row["ticker"] for row in pending})
         market = await get_moex_marketdata(tickers)
-        for row in pending:
-            current = market.get(row["ticker"], {}).get("LAST")
-            initial = row["signal_price"]
-            if not current or not initial:
-                continue
-            outcome = (float(current) - float(initial)) / float(initial) * 100
-            save_alert_outcome(row["id"], round(outcome, 4))
+        for minutes, rows in pending_by_horizon.items():
+            for row in rows:
+                current = market.get(row["ticker"], {}).get("LAST")
+                initial = row["signal_price"]
+                if not current or not initial:
+                    continue
+                outcome = (float(current) - float(initial)) / float(initial) * 100
+                save_alert_outcome(row["id"], round(outcome, 4), minutes)
 
     async def _loop(self) -> None:
         while self._running:

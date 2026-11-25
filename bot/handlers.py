@@ -4,7 +4,7 @@
 import logging
 import os
 import html
-from datetime import timezone
+from datetime import datetime, timezone
 
 from aiogram import Router, F, Bot
 from aiogram.filters import CommandStart, Command, CommandObject
@@ -45,8 +45,11 @@ from database.db import (
     get_favorites,
     record_payment,
     get_payment_user_id,
+    get_payment_beneficiary_id,
+    get_payment_history,
     get_user_settings,
     toggle_user_setting,
+    cycle_user_preference,
     get_recent_alerts,
     get_signal_performance,
     register_referral,
@@ -71,6 +74,10 @@ class AddTickerState(StatesGroup):
 
 class AddFavoriteState(StatesGroup):
     waiting_for_ticker = State()
+
+
+class GiftState(StatesGroup):
+    waiting_for_user_id = State()
 
 
 class AdminState(StatesGroup):
@@ -162,6 +169,31 @@ async def cb_toggle_setting(cb: CallbackQuery) -> None:
     await cb.answer("Настройка сохранена")
 
 
+@router.callback_query(F.data.startswith("preference:"))
+async def cb_cycle_preference(cb: CallbackQuery) -> None:
+    preference = cb.data.split(":", 1)[1]
+    settings = cycle_user_preference(cb.from_user.id, preference)
+    await cb.message.edit_reply_markup(reply_markup=settings_kb(settings))
+    await cb.answer("Фильтр сохранён")
+
+
+@router.callback_query(F.data.startswith("quickfav:"))
+async def cb_quick_favorite(cb: CallbackQuery) -> None:
+    ticker = cb.data.split(":", 1)[1].upper()
+    upsert_user(cb.from_user.id, cb.from_user.username, cb.from_user.first_name)
+    added = add_favorite(cb.from_user.id, ticker, "MOEX")
+    await cb.answer("Добавлено в избранное" if added else "Уже в избранном")
+
+
+@router.callback_query(F.data.startswith("signalwhy:"))
+async def cb_signal_explanation(cb: CallbackQuery) -> None:
+    _, ticker, score = cb.data.split(":", 2)
+    await cb.answer(
+        f"{ticker}: рейтинг {score}/100 собирается из объёма, цены, волатильности и ликвидности.",
+        show_alert=True,
+    )
+
+
 @router.callback_query(F.data == "recent_alerts")
 async def cb_recent_alerts(cb: CallbackQuery) -> None:
     alerts = get_recent_alerts(10)
@@ -197,12 +229,20 @@ async def cb_signal_stats(cb: CallbackQuery) -> None:
             "Статистика собирается. Первый результат появляется через 15 минут после сигнала."
         )
     else:
+        horizon_lines = []
+        for minutes in (5, 15, 30, 60):
+            item = stats["horizons"].get(minutes, {})
+            if item.get("count"):
+                horizon_lines.append(
+                    f"⏱ {minutes} мин: <b>{item['rate']}%</b> · ср. ход <b>{item['avg']}%</b> ({item['count']})"
+                )
         text = (
             "<b>📈 Качество сигналов</b>\n\n"
             f"Проверено: <b>{stats['evaluated']}</b>\n"
             f"Подтвердились: <b>{stats['confirmed']}</b>\n"
             f"Точность направления: <b>{stats['confirmation_rate']}%</b>\n"
             f"Среднее движение за 15 минут: <b>{stats['avg_move']}%</b>\n\n"
+            + ("\n".join(horizon_lines) + "\n\n" if horizon_lines else "") +
             "Метрика обновляется автоматически и не является гарантией будущего результата."
         )
     await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
@@ -251,6 +291,22 @@ async def cb_status(cb: CallbackQuery) -> None:
         reply_markup=buy_menu_kb() if not info else back_kb(),
         parse_mode="HTML",
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "payment_history")
+async def cb_payment_history(cb: CallbackQuery) -> None:
+    rows = get_payment_history(cb.from_user.id)
+    if not rows:
+        text = "<b>🧾 История платежей</b>\n\nПлатежей пока нет."
+    else:
+        lines = ["<b>🧾 История платежей</b>", ""]
+        for row in rows:
+            dt = datetime.fromtimestamp(float(row["created_at"]), tz=timezone.utc).strftime("%d.%m.%Y")
+            unit = "⭐" if row["currency"] == "XTR" else row["currency"]
+            lines.append(f"✅ {dt} · <b>{row['amount']} {unit}</b>")
+        text = "\n".join(lines)
+    await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
     await cb.answer()
 
 
@@ -336,20 +392,71 @@ async def cb_pay_stars(cb: CallbackQuery, bot: Bot) -> None:
     await cb.answer()
 
 
+@router.callback_query(F.data == "gift_subscription")
+async def cb_gift_subscription(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(GiftState.waiting_for_user_id)
+    await cb.message.edit_text(
+        "🎁 <b>Подарить подписку</b>\n\n"
+        "Введите Telegram ID получателя. Его можно узнать командой /id в боте.",
+        reply_markup=back_kb("buy"),
+    )
+    await cb.answer()
+
+
+@router.message(GiftState.waiting_for_user_id)
+async def handle_gift_user_id(msg: Message, state: FSMContext) -> None:
+    try:
+        target_id = int((msg.text or "").strip())
+        if target_id <= 0 or target_id == msg.from_user.id:
+            raise ValueError
+    except ValueError:
+        await msg.answer("Введите корректный Telegram ID другого пользователя.")
+        return
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="1 месяц", callback_data=f"giftpay:{target_id}:1")],
+        [InlineKeyboardButton(text="3 месяца · −10%", callback_data=f"giftpay:{target_id}:3")],
+        [InlineKeyboardButton(text="12 месяцев · −25%", callback_data=f"giftpay:{target_id}:12")],
+        [InlineKeyboardButton(text="‹ Назад", callback_data="buy")],
+    ])
+    await msg.answer(f"Подарок для <code>{target_id}</code>. Выберите срок:", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("giftpay:"))
+async def cb_pay_gift(cb: CallbackQuery, bot: Bot) -> None:
+    _, target_raw, months_raw = cb.data.split(":", 2)
+    target_id, months = int(target_raw), int(months_raw)
+    if months not in (1, 3, 12):
+        await cb.answer("Неизвестный тариф", show_alert=True)
+        return
+    price, label = _stars_plan(months)
+    await bot.send_invoice(
+        chat_id=cb.from_user.id,
+        title="🎁 Подарочная подписка MOEX HELP",
+        description=f"Подписка на {months} мес. для Telegram ID {target_id}",
+        payload=f"gift_{cb.from_user.id}_{target_id}_{months}",
+        currency="XTR",
+        prices=[LabeledPrice(label=label, amount=price)],
+    )
+    await cb.answer()
+
+
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery) -> None:
     parts = query.invoice_payload.split("_")
     try:
+        kind = parts[0]
         payload_user_id = int(parts[1])
-        months = int(parts[2])
+        months = int(parts[3] if kind == "gift" else parts[2])
     except (IndexError, ValueError):
-        payload_user_id, months = 0, 0
+        kind, payload_user_id, months = "", 0, 0
     expected_price = _stars_plan(months)[0] if months in (1, 3, 12) else -1
     is_valid = (
         query.currency == "XTR"
         and query.total_amount == expected_price
         and payload_user_id == query.from_user.id
         and months in (1, 3, 12)
+        and kind in ("sub", "gift")
     )
     await query.answer(
         ok=is_valid,
@@ -358,29 +465,44 @@ async def pre_checkout(query: PreCheckoutQuery) -> None:
 
 
 @router.message(F.successful_payment)
-async def payment_success(msg: Message) -> None:
+async def payment_success(msg: Message, bot: Bot) -> None:
     p = msg.successful_payment
     try:
-        months = int(p.invoice_payload.rsplit("_", 1)[1])
+        parts = p.invoice_payload.split("_")
+        months = int(parts[-1])
+        target_id = int(parts[2]) if parts[0] == "gift" else msg.from_user.id
     except (ValueError, IndexError):
         months = 1
+        target_id = msg.from_user.id
     if months not in (1, 3, 12):
         logger.error("Некорректный тариф в successful_payment: %s", p.invoice_payload)
         return
     charge_id = p.telegram_payment_charge_id
-    is_new = record_payment(msg.from_user.id, charge_id, p.total_amount, p.currency)
+    is_new = record_payment(msg.from_user.id, charge_id, p.total_amount, p.currency, target_id)
     if is_new:
-        activate_paid(msg.from_user.id, months)
+        upsert_user(target_id)
+        activate_paid(target_id, months)
     else:
         logger.warning("Повторный successful_payment проигнорирован: charge_id=%s", charge_id)
     await msg.answer(
         "✅ <b>Оплата прошла успешно!</b>\n\n"
         f"Вы оплатили <b>{p.total_amount} ⭐ Stars</b>.\n"
-        f"Подписка активна на <b>{months} мес.</b> Алерты уже идут!\n\n"
+        f"Подписка активна на <b>{months} мес.</b>"
+        + (f" Подарок отправлен получателю <code>{target_id}</code>." if target_id != msg.from_user.id else " Алерты уже идут!")
+        + "\n\n"
         "Настройте персональные тикеры через меню «📋 Мои тикеры».",
         reply_markup=main_menu_kb(),
         parse_mode="HTML",
     )
+    if is_new and target_id != msg.from_user.id:
+        try:
+            await bot.send_message(
+                target_id,
+                f"🎁 <b>Вам подарили MOEX HELP на {months} мес.</b>\n\nПодписка уже активна.",
+                reply_markup=main_menu_kb(),
+            )
+        except Exception:
+            logger.info("Не удалось уведомить получателя подарка %s", target_id)
     logger.info("Оплата от user_id=%d, charge_id=%s, stars=%d",
                 msg.from_user.id, charge_id, p.total_amount)
 
@@ -389,7 +511,7 @@ async def payment_success(msg: Message) -> None:
 async def payment_refund(msg: Message) -> None:
     p = msg.refunded_payment
     charge_id = p.telegram_payment_charge_id
-    user_id = get_payment_user_id(charge_id)
+    user_id = get_payment_beneficiary_id(charge_id)
     if user_id is None:
         logger.error("Не найден пользователь для возврата Stars: charge_id=%s", charge_id)
         await msg.answer("↩️ Возврат получен, но подписка требует ручной проверки. Напишите в поддержку.")
@@ -610,7 +732,8 @@ def _admin_panel_text() -> str:
         f"✅ Активных подписок: <b>{s['active_subs']}</b>\n"
         f"💎 Платных подписок: <b>{s['paid_subs']}</b>\n"
         f"🔔 Алертов за 24ч: <b>{s['alerts_today']}</b>\n\n"
-        f"💰 Текущая цена: <b>{price} ⭐ Stars / мес</b>"
+        f"💰 Доход в Stars: <b>{s['revenue_stars']} ⭐</b>\n"
+        f"💳 Текущая цена: <b>{price['stars']} ⭐ / мес</b>"
     )
 
 

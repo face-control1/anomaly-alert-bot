@@ -4,6 +4,7 @@ database/db.py ÃÂ¢ÃÂÃÂ ÃÂÃÂÃÂÃÂ½ÃÂ
 
 import os
 import logging
+import shutil
 from datetime import datetime, timezone, timedelta
 from contextlib import contextmanager
 
@@ -58,6 +59,18 @@ else:
     PH = "?"  # placeholder ÃÂÃÂ´ÃÂÃÂ»ÃÂÃÂ SQLite
 
 
+def backup_sqlite() -> str | None:
+    """Create a recoverable daily SQLite copy; PostgreSQL is backed up by Render."""
+    if USE_POSTGRES or not os.path.exists(DB_PATH):
+        return None
+    backup_dir = os.path.join(os.path.dirname(DB_PATH) or ".", "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    target = os.path.join(backup_dir, f"bot-{stamp}.sqlite")
+    shutil.copy2(DB_PATH, target)
+    return target
+
+
 def init_db() -> None:
     """ÃÂÃÂ¡ÃÂÃÂ¾ÃÂÃÂ·ÃÂÃÂ´ÃÂÃÂ°ÃÂÃÂÃÂÃÂ ÃÂÃÂÃÂÃÂ°ÃÂÃÂ±ÃÂÃÂ»ÃÂÃÂ¸ÃÂÃÂÃÂÃÂ ÃÂÃÂµÃÂÃÂÃÂÃÂ»ÃÂÃÂ¸ ÃÂÃÂ½ÃÂÃÂµ ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂµÃÂÃÂÃÂÃÂÃÂÃÂ²ÃÂÃÂÃÂÃÂÃÂÃÂ."""
     with get_conn() as conn:
@@ -98,6 +111,7 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS payments (
                     id              SERIAL PRIMARY KEY,
                     user_id         BIGINT NOT NULL REFERENCES users(user_id),
+                    beneficiary_user_id BIGINT,
                     telegram_charge TEXT UNIQUE,
                     amount          INTEGER NOT NULL,
                     currency        TEXT NOT NULL,
@@ -115,13 +129,22 @@ def init_db() -> None:
                     signal_price DOUBLE PRECISION,
                     direction INTEGER NOT NULL DEFAULT 0,
                     outcome_15m_pct DOUBLE PRECISION,
+                    outcome_5m_pct DOUBLE PRECISION,
+                    outcome_30m_pct DOUBLE PRECISION,
+                    outcome_60m_pct DOUBLE PRECISION,
+                    score INTEGER NOT NULL DEFAULT 50,
                     evaluated_at DOUBLE PRECISION
                 )
             """)
+            cur.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS beneficiary_user_id BIGINT")
             for statement in (
                 "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS signal_price DOUBLE PRECISION",
                 "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS direction INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS outcome_15m_pct DOUBLE PRECISION",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS outcome_5m_pct DOUBLE PRECISION",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS outcome_30m_pct DOUBLE PRECISION",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS outcome_60m_pct DOUBLE PRECISION",
+                "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS score INTEGER NOT NULL DEFAULT 50",
                 "ALTER TABLE alerts_log ADD COLUMN IF NOT EXISTS evaluated_at DOUBLE PRECISION",
             ):
                 cur.execute(statement)
@@ -133,8 +156,12 @@ def init_db() -> None:
                     band_alerts   BOOLEAN NOT NULL DEFAULT TRUE,
                     quiet_hours   BOOLEAN NOT NULL DEFAULT FALSE,
                     paused        BOOLEAN NOT NULL DEFAULT FALSE
+                    ,min_score    INTEGER NOT NULL DEFAULT 60
+                    ,direction    TEXT NOT NULL DEFAULT 'all'
                 )
             """)
+            cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS min_score INTEGER NOT NULL DEFAULT 60")
+            cur.execute("ALTER TABLE user_settings ADD COLUMN IF NOT EXISTS direction TEXT NOT NULL DEFAULT 'all'")
             cur.close()
         else:
             conn.executescript("""
@@ -161,6 +188,7 @@ def init_db() -> None:
                 CREATE TABLE IF NOT EXISTS payments (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id         INTEGER NOT NULL REFERENCES users(user_id),
+                    beneficiary_user_id INTEGER,
                     telegram_charge TEXT UNIQUE,
                     amount          INTEGER NOT NULL,
                     currency        TEXT NOT NULL,
@@ -176,6 +204,10 @@ def init_db() -> None:
                     signal_price REAL,
                     direction INTEGER NOT NULL DEFAULT 0,
                     outcome_15m_pct REAL,
+                    outcome_5m_pct REAL,
+                    outcome_30m_pct REAL,
+                    outcome_60m_pct REAL,
+                    score INTEGER NOT NULL DEFAULT 50,
                     evaluated_at REAL
                 );
                 CREATE TABLE IF NOT EXISTS user_settings (
@@ -185,6 +217,8 @@ def init_db() -> None:
                     band_alerts   INTEGER NOT NULL DEFAULT 1,
                     quiet_hours   INTEGER NOT NULL DEFAULT 0,
                     paused        INTEGER NOT NULL DEFAULT 0
+                    ,min_score    INTEGER NOT NULL DEFAULT 60
+                    ,direction    TEXT NOT NULL DEFAULT 'all'
                 );
             """)
             existing_columns = {
@@ -194,6 +228,10 @@ def init_db() -> None:
                 ("signal_price", "REAL"),
                 ("direction", "INTEGER NOT NULL DEFAULT 0"),
                 ("outcome_15m_pct", "REAL"),
+                ("outcome_5m_pct", "REAL"),
+                ("outcome_30m_pct", "REAL"),
+                ("outcome_60m_pct", "REAL"),
+                ("score", "INTEGER NOT NULL DEFAULT 50"),
                 ("evaluated_at", "REAL"),
             ):
                 if name not in existing_columns:
@@ -203,6 +241,14 @@ def init_db() -> None:
                 conn.execute("ALTER TABLE users ADD COLUMN first_name TEXT")
             if "referrer_id" not in user_columns:
                 conn.execute("ALTER TABLE users ADD COLUMN referrer_id INTEGER")
+            payment_columns = {row[1] for row in conn.execute("PRAGMA table_info(payments)").fetchall()}
+            if "beneficiary_user_id" not in payment_columns:
+                conn.execute("ALTER TABLE payments ADD COLUMN beneficiary_user_id INTEGER")
+            setting_columns = {row[1] for row in conn.execute("PRAGMA table_info(user_settings)").fetchall()}
+            if "min_score" not in setting_columns:
+                conn.execute("ALTER TABLE user_settings ADD COLUMN min_score INTEGER NOT NULL DEFAULT 60")
+            if "direction" not in setting_columns:
+                conn.execute("ALTER TABLE user_settings ADD COLUMN direction TEXT NOT NULL DEFAULT 'all'")
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
 
 
@@ -389,6 +435,29 @@ def get_all_active_user_ids() -> list[int]:
             ).fetchall()]
 
 
+def get_expiring_subscriptions(min_hours: int, max_hours: int) -> list[dict]:
+    now_ts = datetime.now(timezone.utc).timestamp()
+    low = now_ts + min_hours * 3600
+    high = now_ts + max_hours * 3600
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                f"SELECT user_id, MAX(expires_at) AS expires_at FROM subscriptions "
+                f"GROUP BY user_id HAVING MAX(expires_at) >= {PH} AND MAX(expires_at) < {PH}",
+                (low, high),
+            )
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(
+                "SELECT user_id, MAX(expires_at) AS expires_at FROM subscriptions "
+                "GROUP BY user_id HAVING MAX(expires_at) >= ? AND MAX(expires_at) < ?",
+                (low, high),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def log_alert(
     ticker: str,
     exchange: str,
@@ -396,33 +465,37 @@ def log_alert(
     headline: str | None = None,
     signal_price: float | None = None,
     direction: int = 0,
+    score: int = 50,
 ) -> None:
     """ÃÂÃÂÃÂÃÂ°ÃÂÃÂ¿ÃÂÃÂ¸ÃÂÃÂÃÂÃÂ°ÃÂÃÂÃÂÃÂ ÃÂÃÂ°ÃÂÃÂ»ÃÂÃÂµÃÂÃÂÃÂÃÂ ÃÂÃÂ² ÃÂÃÂ»ÃÂÃÂ¾ÃÂÃÂ³ (ÃÂÃÂ´ÃÂÃÂ»ÃÂÃÂ ÃÂÃÂÃÂÃÂÃÂÃÂ°ÃÂÃÂÃÂÃÂ¸ÃÂÃÂÃÂÃÂÃÂÃÂ¸ÃÂÃÂºÃÂÃÂ¸ /admin)."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO alerts_log (ticker, exchange, alert_type, headline, signal_price, direction) "
-                f"VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH})",
-                (ticker, exchange, alert_type, headline, signal_price, direction)
+                f"INSERT INTO alerts_log (ticker, exchange, alert_type, headline, signal_price, direction, score) "
+                f"VALUES ({PH}, {PH}, {PH}, {PH}, {PH}, {PH}, {PH})",
+                (ticker, exchange, alert_type, headline, signal_price, direction, score)
             )
             cur.close()
         else:
             conn.execute(
-                "INSERT INTO alerts_log (ticker, exchange, alert_type, headline, signal_price, direction) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (ticker, exchange, alert_type, headline, signal_price, direction)
+                "INSERT INTO alerts_log (ticker, exchange, alert_type, headline, signal_price, direction, score) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (ticker, exchange, alert_type, headline, signal_price, direction, score)
             )
 
 
-def get_pending_outcomes(limit: int = 100) -> list[dict]:
-    cutoff = datetime.now(timezone.utc).timestamp() - 15 * 60
+def get_pending_outcomes(horizon_minutes: int = 15, limit: int = 100) -> list[dict]:
+    if horizon_minutes not in (5, 15, 30, 60):
+        raise ValueError("Unsupported outcome horizon")
+    column = f"outcome_{horizon_minutes}m_pct"
+    cutoff = datetime.now(timezone.utc).timestamp() - horizon_minutes * 60
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cur.execute(
                 f"SELECT id, ticker, signal_price, direction FROM alerts_log "
-                f"WHERE created_at <= {PH} AND signal_price > 0 AND outcome_15m_pct IS NULL "
+                f"WHERE created_at <= {PH} AND signal_price > 0 AND {column} IS NULL "
                 f"ORDER BY created_at LIMIT {PH}",
                 (cutoff, limit),
             )
@@ -431,26 +504,29 @@ def get_pending_outcomes(limit: int = 100) -> list[dict]:
         else:
             rows = conn.execute(
                 "SELECT id, ticker, signal_price, direction FROM alerts_log "
-                "WHERE created_at <= ? AND signal_price > 0 AND outcome_15m_pct IS NULL "
+                f"WHERE created_at <= ? AND signal_price > 0 AND {column} IS NULL "
                 "ORDER BY created_at LIMIT ?",
                 (cutoff, limit),
             ).fetchall()
     return [dict(row) for row in rows]
 
 
-def save_alert_outcome(alert_id: int, outcome_pct: float) -> None:
+def save_alert_outcome(alert_id: int, outcome_pct: float, horizon_minutes: int = 15) -> None:
+    if horizon_minutes not in (5, 15, 30, 60):
+        raise ValueError("Unsupported outcome horizon")
+    column = f"outcome_{horizon_minutes}m_pct"
     now_ts = datetime.now(timezone.utc).timestamp()
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"UPDATE alerts_log SET outcome_15m_pct = {PH}, evaluated_at = {PH} WHERE id = {PH}",
+                f"UPDATE alerts_log SET {column} = {PH}, evaluated_at = {PH} WHERE id = {PH}",
                 (outcome_pct, now_ts, alert_id),
             )
             cur.close()
         else:
             conn.execute(
-                "UPDATE alerts_log SET outcome_15m_pct = ?, evaluated_at = ? WHERE id = ?",
+                f"UPDATE alerts_log SET {column} = ?, evaluated_at = ? WHERE id = ?",
                 (outcome_pct, now_ts, alert_id),
             )
 
@@ -469,7 +545,7 @@ def get_signal_performance() -> dict:
         else:
             rows = conn.execute(query).fetchall()
     if not rows:
-        return {"evaluated": 0, "confirmed": 0, "confirmation_rate": 0.0, "avg_move": 0.0}
+        return {"evaluated": 0, "confirmed": 0, "confirmation_rate": 0.0, "avg_move": 0.0, "horizons": _get_outcome_horizons()}
     confirmed = 0
     moves = []
     for outcome, direction in rows:
@@ -484,7 +560,37 @@ def get_signal_performance() -> dict:
         "confirmed": confirmed,
         "confirmation_rate": round(confirmed / len(rows) * 100, 1),
         "avg_move": round(sum(abs(x) for x in moves) / len(moves), 2),
+        "horizons": _get_outcome_horizons(),
     }
+
+
+def _get_outcome_horizons() -> dict:
+    result = {}
+    with get_conn() as conn:
+        for minutes in (5, 15, 30, 60):
+            column = f"outcome_{minutes}m_pct"
+            query = f"SELECT {column}, direction FROM alerts_log WHERE {column} IS NOT NULL ORDER BY created_at DESC LIMIT 500"
+            if USE_POSTGRES:
+                cur = conn.cursor()
+                cur.execute(query)
+                rows = cur.fetchall()
+                cur.close()
+            else:
+                rows = conn.execute(query).fetchall()
+            if not rows:
+                result[minutes] = {"count": 0, "rate": 0.0, "avg": 0.0}
+                continue
+            moves = [float(row[0]) for row in rows]
+            confirmed = sum(
+                1 for move, row in zip(moves, rows)
+                if (int(row[1]) > 0 and move > 0) or (int(row[1]) < 0 and move < 0) or (int(row[1]) == 0 and abs(move) >= 0.5)
+            )
+            result[minutes] = {
+                "count": len(rows),
+                "rate": round(confirmed / len(rows) * 100, 1),
+                "avg": round(sum(abs(move) for move in moves) / len(moves), 2),
+            }
+    return result
 
 
 def get_recent_alerts(limit: int = 10) -> list[dict]:
@@ -603,24 +709,24 @@ def get_all_users() -> list[dict]:
     return result
 
 
-def record_payment(user_id: int, telegram_charge: str, amount: int, currency: str) -> bool:
+def record_payment(user_id: int, telegram_charge: str, amount: int, currency: str, beneficiary_user_id: int | None = None) -> bool:
     """Записать платёж один раз. Возвращает True только для нового charge id."""
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO payments (user_id, telegram_charge, amount, currency) "
-                f"VALUES ({PH}, {PH}, {PH}, {PH}) ON CONFLICT (telegram_charge) DO NOTHING",
-                (user_id, telegram_charge, amount, currency)
+                f"INSERT INTO payments (user_id, beneficiary_user_id, telegram_charge, amount, currency) "
+                f"VALUES ({PH}, {PH}, {PH}, {PH}, {PH}) ON CONFLICT (telegram_charge) DO NOTHING",
+                (user_id, beneficiary_user_id or user_id, telegram_charge, amount, currency)
             )
             inserted = cur.rowcount == 1
             cur.close()
             return inserted
         else:
             cur = conn.execute(
-                "INSERT OR IGNORE INTO payments (user_id, telegram_charge, amount, currency) "
-                "VALUES (?, ?, ?, ?)",
-                (user_id, telegram_charge, amount, currency)
+                "INSERT OR IGNORE INTO payments (user_id, beneficiary_user_id, telegram_charge, amount, currency) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (user_id, beneficiary_user_id or user_id, telegram_charge, amount, currency)
             )
             return cur.rowcount == 1
 
@@ -644,14 +750,51 @@ def get_payment_user_id(telegram_charge: str) -> int | None:
     return int(row[0]) if row else None
 
 
+def get_payment_beneficiary_id(telegram_charge: str) -> int | None:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT COALESCE(beneficiary_user_id, user_id) FROM payments WHERE telegram_charge = {PH} LIMIT 1",
+                (telegram_charge,),
+            )
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute(
+                "SELECT COALESCE(beneficiary_user_id, user_id) FROM payments WHERE telegram_charge = ? LIMIT 1",
+                (telegram_charge,),
+            ).fetchone()
+    return int(row[0]) if row else None
+
+
+def get_payment_history(user_id: int, limit: int = 10) -> list[dict]:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                f"SELECT amount, currency, created_at FROM payments WHERE user_id = {PH} ORDER BY created_at DESC LIMIT {PH}",
+                (user_id, limit),
+            )
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(
+                "SELECT amount, currency, created_at FROM payments WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_user_settings(user_id: int) -> dict:
-    defaults = {
+    boolean_defaults = {
         "volume_alerts": True,
         "price_alerts": True,
         "band_alerts": True,
         "quiet_hours": False,
         "paused": False,
     }
+    defaults = {**boolean_defaults, "min_score": 60, "direction": "all"}
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -662,7 +805,10 @@ def get_user_settings(user_id: int) -> dict:
             row = conn.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
     if not row:
         return defaults
-    return {key: bool(row[key]) for key in defaults}
+    result = {key: bool(row[key]) for key in boolean_defaults}
+    result["min_score"] = int(row["min_score"] or 60)
+    result["direction"] = str(row["direction"] or "all")
+    return result
 
 
 def toggle_user_setting(user_id: int, setting: str) -> dict:
@@ -686,6 +832,36 @@ def toggle_user_setting(user_id: int, setting: str) -> dict:
                 f"INSERT INTO user_settings (user_id, {setting}) VALUES (?, ?) "
                 f"ON CONFLICT (user_id) DO UPDATE SET {setting} = excluded.{setting}",
                 (user_id, int(new_value)),
+            )
+    return get_user_settings(user_id)
+
+
+def cycle_user_preference(user_id: int, preference: str) -> dict:
+    """Cycle score threshold or signal direction and return fresh settings."""
+    ensure_user(user_id)
+    current = get_user_settings(user_id)
+    if preference == "min_score":
+        values = (40, 60, 80)
+        value = values[(values.index(current["min_score"]) + 1) % len(values)] if current["min_score"] in values else 60
+    elif preference == "direction":
+        values = ("all", "up", "down")
+        value = values[(values.index(current["direction"]) + 1) % len(values)] if current["direction"] in values else "all"
+    else:
+        raise ValueError("Unknown preference")
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO user_settings (user_id, {preference}) VALUES ({PH}, {PH}) "
+                f"ON CONFLICT (user_id) DO UPDATE SET {preference} = EXCLUDED.{preference}",
+                (user_id, value),
+            )
+            cur.close()
+        else:
+            conn.execute(
+                f"INSERT INTO user_settings (user_id, {preference}) VALUES (?, ?) "
+                f"ON CONFLICT (user_id) DO UPDATE SET {preference} = excluded.{preference}",
+                (user_id, value),
             )
     return get_user_settings(user_id)
 
@@ -751,11 +927,15 @@ def get_stats() -> dict:
                 (now_ts,)
             )
             active_subs = cur.fetchone()[0]
+            cur.execute(f"SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE expires_at > {PH} AND type <> 'trial'", (now_ts,))
+            paid_subs = cur.fetchone()[0]
             cur.execute(
                 f"SELECT COUNT(*) FROM alerts_log WHERE created_at > {PH}",
                 (day_ago,)
             )
             alerts_24h = cur.fetchone()[0]
+            cur.execute("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE currency = 'XTR'")
+            revenue_stars = cur.fetchone()[0]
             cur.close()
         else:
             total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -767,10 +947,16 @@ def get_stats() -> dict:
                 "SELECT COUNT(*) FROM alerts_log WHERE created_at > ?",
                 (day_ago,)
             ).fetchone()[0]
+            paid_subs = conn.execute(
+                "SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE expires_at > ? AND type <> 'trial'", (now_ts,)
+            ).fetchone()[0]
+            revenue_stars = conn.execute("SELECT COALESCE(SUM(amount), 0) FROM payments WHERE currency = 'XTR'").fetchone()[0]
     return {
         "total_users": total_users,
-        "active_subscriptions": active_subs,
-        "alerts_24h": alerts_24h,
+        "active_subs": active_subs,
+        "paid_subs": paid_subs,
+        "alerts_today": alerts_24h,
+        "revenue_stars": int(revenue_stars or 0),
     }
 
 
@@ -788,10 +974,11 @@ def set_subscription_price(stars: int) -> None:
     _subscription_price["stars"] = stars
 
 
-def grant_trial(user_id: int) -> bool:
+def grant_trial(user_id: int, hours: int = TRIAL_PERIOD_HOURS) -> bool:
     """ÃÂÃÂÃÂ¸ÃÂ½ÃÂÃÂ´ÃÂ¸ÃÂÃÂµÃÂ»ÃÂÃÂ½ÃÂ¾ ÃÂ´ÃÂ°ÃÂÃÂ ÃÂÃÂÃÂ¸ÃÂ°ÃÂ» (ÃÂ´ÃÂ°ÃÂ¶ÃÂµ ÃÂµÃÂÃÂ»ÃÂ¸ ÃÂÃÂ¶ÃÂµ ÃÂ±ÃÂÃÂ»). ÃÂÃÂ»ÃÂ /admin."""
     now = datetime.now(timezone.utc)
-    expires = now + timedelta(hours=TRIAL_PERIOD_HOURS)
+    ensure_user(user_id)
+    expires = now + timedelta(hours=max(1, hours))
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()

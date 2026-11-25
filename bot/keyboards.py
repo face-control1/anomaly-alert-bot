@@ -13,6 +13,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎛 Настроить алерты", callback_data="settings")],
         [InlineKeyboardButton(text="💎 Подписка", callback_data="status"),
          InlineKeyboardButton(text="🚀 Купить", callback_data="buy")],
+        [InlineKeyboardButton(text="🧾 История платежей", callback_data="payment_history")],
         [InlineKeyboardButton(text="🎁 Попробовать 24 часа", callback_data="trial")],
         [InlineKeyboardButton(text="🤝 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton(text="ℹ️ Возможности", callback_data="about"),
@@ -23,6 +24,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 def settings_kb(settings: dict) -> InlineKeyboardMarkup:
     mark = lambda enabled: "✅" if enabled else "⚪"
     pause_text = "▶️ Возобновить уведомления" if settings["paused"] else "⏸ Приостановить уведомления"
+    direction_label = {"all": "↕️ Рост и падение", "up": "📈 Только рост", "down": "📉 Только падение"}[settings["direction"]]
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text=f"{mark(settings['volume_alerts'])} Аномальный объём",
@@ -40,6 +42,8 @@ def settings_kb(settings: dict) -> InlineKeyboardMarkup:
             text=f"{mark(settings['quiet_hours'])} Тихие часы 23:00–07:00",
             callback_data="setting:quiet_hours",
         )],
+        [InlineKeyboardButton(text=f"🎯 Мин. рейтинг: {settings['min_score']}/100", callback_data="preference:min_score")],
+        [InlineKeyboardButton(text=direction_label, callback_data="preference:direction")],
         [InlineKeyboardButton(text=pause_text, callback_data="setting:paused")],
         [InlineKeyboardButton(text="‹ Главное меню", callback_data="main_menu")],
     ])
@@ -71,6 +75,7 @@ def buy_menu_kb() -> InlineKeyboardMarkup:
             text=f"⭐ 12 месяцев · {SUBSCRIPTION_PRICE_STARS * 9} Stars · −25%",
             callback_data="pay_stars:12",
         )],
+        [InlineKeyboardButton(text="🎁 Подарить подписку", callback_data="gift_subscription")],
     ])
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)

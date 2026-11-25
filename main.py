@@ -11,7 +11,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 
 # Добавляем корневую папку в PYTHONPATH
 sys.path.insert(0, os.path.dirname(__file__))
@@ -66,6 +66,7 @@ async def make_alert_sender(bot: Bot):
                     alert.headline,
                     signal_price=alert.current_price,
                     direction=direction,
+                    score=alert.score,
                 )
             except Exception:
                 pass
@@ -78,8 +79,21 @@ async def make_alert_sender(bot: Bot):
                         url=f"https://www.moex.com/ru/issue.aspx?board=TQBR&code={alert.ticker}",
                     ),
                     InlineKeyboardButton(text="🎛 Настройки", callback_data="settings"),
-                ]
+                ],
+                [
+                    InlineKeyboardButton(text="⭐ В избранное", callback_data=f"quickfav:{alert.ticker}"),
+                    InlineKeyboardButton(text="💡 О сигнале", callback_data=f"signalwhy:{alert.ticker}:{alert.score}"),
+                ],
             ])
+
+            chart = None
+            try:
+                from market.moex import get_moex_candles
+                from market.chart import render_signal_chart
+                chart_candles = await get_moex_candles(alert.ticker, "TQBR", interval=1, n_bars=60)
+                chart = render_signal_chart(alert.ticker, chart_candles, alert.current_price)
+            except Exception as exc:
+                logger.debug("Не удалось построить график %s: %s", alert.ticker, exc)
 
             for uid in user_ids:
                 try:
@@ -97,6 +111,12 @@ async def make_alert_sender(bot: Bot):
                     }
                     if alert.alert_type != "combined" and not type_enabled.get(alert.alert_type, True):
                         continue
+                    if alert.score < settings["min_score"]:
+                        continue
+                    if settings["direction"] == "up" and alert.price_change_1m_pct <= 0:
+                        continue
+                    if settings["direction"] == "down" and alert.price_change_1m_pct >= 0:
+                        continue
                     # Если у пользователя есть избранное — шлём только алерты по его акциям
                     favs = get_favorites(uid)
                     if favs:
@@ -106,7 +126,16 @@ async def make_alert_sender(bot: Bot):
                         )
                         if not is_in_favs:
                             continue
-                    await bot.send_message(uid, text, parse_mode="HTML", reply_markup=alert_kb)
+                    if chart:
+                        await bot.send_photo(
+                            uid,
+                            BufferedInputFile(chart, filename=f"{alert.ticker}_signal.png"),
+                            caption=text,
+                            parse_mode="HTML",
+                            reply_markup=alert_kb,
+                        )
+                    else:
+                        await bot.send_message(uid, text, parse_mode="HTML", reply_markup=alert_kb)
                 except Exception as e:
                     logger.debug("Не удалось отправить алерт пользователю %d: %s", uid, e)
 
@@ -205,7 +234,6 @@ async def main() -> None:
     # Создаём callbacks для рассылки
     send_alerts = await make_alert_sender(bot)
     send_orderbook = await make_orderbook_callback(bot)
-    send_corp_reports = await make_corp_reports_callback(bot)
 
     async def notify_admins(message: str) -> None:
         for admin_id in ADMIN_IDS:
@@ -247,31 +275,21 @@ async def main() -> None:
     except Exception as e:
         logger.warning("OrderbookWatcher не запущен: %s", e)
 
-    # Запускаем мониторинг корпоративных отчётов
+    # Новости и корпоративные события отключены по решению владельца.
     corp_watcher = None
-    try:
-        from market.corp_reports_watcher import CorpReportsWatcher
-        from market.moex import get_all_moex_tickers as _get_tickers
-        _ticker_strs = await _get_tickers("TQBR")
-        corp_tickers = [(_t, _t) for _t in _ticker_strs]
-        corp_watcher = CorpReportsWatcher(
-            tickers=corp_tickers,
-            alert_callback=send_corp_reports,
-        )
-        await corp_watcher.start()
-        logger.info("CorpReportsWatcher запущен")
-    except Exception as e:
-        logger.warning("CorpReportsWatcher не запущен: %s", e)
 
-    # Запускаем APScheduler для напоминаний о подписке
+    # Утренние/вечерние сводки и напоминания о подписке
     try:
         from apscheduler.schedulers.asyncio import AsyncIOScheduler
-        from bot.payments_yukassa import setup_expiry_reminders, YUKASSA_AVAILABLE
-        if YUKASSA_AVAILABLE:
-            scheduler = AsyncIOScheduler()
-            setup_expiry_reminders(scheduler, bot)
-            scheduler.start()
-            logger.info("APScheduler запущен (напоминания о подписке)")
+        from market.reports import send_morning_report, send_evening_report, send_expiry_reminders
+        from database.db import backup_sqlite
+        scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+        scheduler.add_job(send_morning_report, "cron", day_of_week="mon-fri", hour=9, minute=45, args=[bot])
+        scheduler.add_job(send_evening_report, "cron", day_of_week="mon-fri", hour=19, minute=5, args=[bot])
+        scheduler.add_job(send_expiry_reminders, "cron", hour=10, minute=15, args=[bot])
+        scheduler.add_job(backup_sqlite, "cron", hour=3, minute=20)
+        scheduler.start()
+        logger.info("APScheduler запущен (сводки и напоминания)")
     except ImportError:
         logger.info("APScheduler не установлен — напоминания о подписке отключены")
     except Exception as e:
