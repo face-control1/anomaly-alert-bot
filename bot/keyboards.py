@@ -7,13 +7,39 @@ from config import SUBSCRIPTION_PRICE_STARS
 
 def main_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Мой статус подписки", callback_data="status")],
-        [InlineKeyboardButton(text="⭐ Купить подписку",      callback_data="buy")],
-        [InlineKeyboardButton(text="🕐 Пробный период 24ч",  callback_data="trial")],
-        [InlineKeyboardButton(text="🌟 Избранное",            callback_data="favorites"),
-         InlineKeyboardButton(text="📋 Мои тикеры",          callback_data="my_tickers")],
-        [InlineKeyboardButton(text="ℹ️ О боте",               callback_data="about"),
-         InlineKeyboardButton(text="💬 Поддержка",            callback_data="support")],
+        [InlineKeyboardButton(text="📡 Лента сигналов", callback_data="recent_alerts"),
+         InlineKeyboardButton(text="⭐ Избранное", callback_data="favorites")],
+        [InlineKeyboardButton(text="🎛 Настроить алерты", callback_data="settings")],
+        [InlineKeyboardButton(text="💎 Подписка", callback_data="status"),
+         InlineKeyboardButton(text="🚀 Купить", callback_data="buy")],
+        [InlineKeyboardButton(text="🎁 Попробовать 24 часа", callback_data="trial")],
+        [InlineKeyboardButton(text="ℹ️ Возможности", callback_data="about"),
+         InlineKeyboardButton(text="💬 Поддержка", callback_data="support")],
+    ])
+
+
+def settings_kb(settings: dict) -> InlineKeyboardMarkup:
+    mark = lambda enabled: "✅" if enabled else "⚪"
+    pause_text = "▶️ Возобновить уведомления" if settings["paused"] else "⏸ Приостановить уведомления"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"{mark(settings['volume_alerts'])} Аномальный объём",
+            callback_data="setting:volume_alerts",
+        )],
+        [InlineKeyboardButton(
+            text=f"{mark(settings['price_alerts'])} Резкое движение",
+            callback_data="setting:price_alerts",
+        )],
+        [InlineKeyboardButton(
+            text=f"{mark(settings['band_alerts'])} Полосы Боллинджера",
+            callback_data="setting:band_alerts",
+        )],
+        [InlineKeyboardButton(
+            text=f"{mark(settings['quiet_hours'])} Тихие часы 23:00–07:00",
+            callback_data="setting:quiet_hours",
+        )],
+        [InlineKeyboardButton(text=pause_text, callback_data="setting:paused")],
+        [InlineKeyboardButton(text="‹ Главное меню", callback_data="main_menu")],
     ])
 
 
@@ -30,10 +56,20 @@ def buy_menu_kb() -> InlineKeyboardMarkup:
             text="💳 Оплатить картой / СБП (ЮKassa)",
             callback_data="pay_yukassa",
         )])
-    buttons.append([InlineKeyboardButton(
-        text=f"⭐ Оплатить {SUBSCRIPTION_PRICE_STARS} Stars / месяц",
-        callback_data="pay_stars",
-    )])
+    buttons.extend([
+        [InlineKeyboardButton(
+            text=f"⭐ 1 месяц · {SUBSCRIPTION_PRICE_STARS} Stars",
+            callback_data="pay_stars:1",
+        )],
+        [InlineKeyboardButton(
+            text=f"⭐ 3 месяца · {round(SUBSCRIPTION_PRICE_STARS * 2.7)} Stars · −10%",
+            callback_data="pay_stars:3",
+        )],
+        [InlineKeyboardButton(
+            text=f"⭐ 12 месяцев · {SUBSCRIPTION_PRICE_STARS * 9} Stars · −25%",
+            callback_data="pay_stars:12",
+        )],
+    ])
     buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import statistics
 import time
+import html
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -65,20 +66,23 @@ class Alert:
         day_sign = "+" if self.price_change_day_pct >= 0 else ""
         min_sign = "+" if self.price_change_1m_pct >= 0 else ""
 
+        ticker = html.escape(self.ticker)
+        short_name = html.escape(self.short_name)
+        headline = html.escape(self.headline)
+        details = html.escape(self.details)
         return (
-            f"{self.emoji} <b>{self.ticker}</b> — {self.short_name}\n"
-            f"🕐 {self.alert_time} | {self.exchange}\n"
-            f"\n"
-            f"⚡️ <b>{self.headline}</b>\n"
-            f"{self.details}\n"
-            f"\n"
-            f"💰 Цена: <b>{self.current_price:,.2f} ₽</b>\n"
-            f"📊 Объём (мин): <b>{self.volume_1m:,} лот</b>"
+            f"{self.emoji} <b>{ticker}</b>  ·  {short_name}\n"
+            f"<code>{self.exchange}  |  {self.alert_time} МСК</code>\n"
+            f"━━━━━━━━━━━━━━\n"
+            f"<b>{headline}</b>\n"
+            f"{details}\n\n"
+            f"💰 <b>{self.current_price:,.2f} ₽</b>\n"
+            f"📊 {self.volume_1m:,} лот"
             + (f" / {self.value_1m/1_000_000:.2f}M ₽" if self.value_1m > 0 else "")
             + f"\n"
-            f"⏱ За минуту: <b>{min_sign}{self.price_change_1m_pct:.2f}%</b>\n"
-            f"📅 За день:   <b>{day_sign}{self.price_change_day_pct:.2f}%</b>\n"
-            f"📆 За неделю: <b>{week_str}</b>"
+            f"⏱ 1 мин: <b>{min_sign}{self.price_change_1m_pct:.2f}%</b>  ·  "
+            f"день: <b>{day_sign}{self.price_change_day_pct:.2f}%</b>\n"
+            f"📆 Неделя: <b>{week_str}</b>"
         )
 
 

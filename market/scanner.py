@@ -31,6 +31,7 @@ from market.moex import (
     get_weekly_change,
 )
 from market.anomaly import Alert, AlertCooldownFilter, run_all_detectors
+from health_state import update_health
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ class MarketScanner:
         cooldown_seconds: float = 60,  # кулдаун между алертами по (ticker, type)
         stale_after_ms: float = STALE_AFTER_MS,
         min_volume_lots: int = MIN_VOLUME_LOTS,
+        health_callback=None,
     ):
         self.alert_callback = alert_callback
         self.interval = interval_seconds
@@ -87,6 +89,8 @@ class MarketScanner:
         # Pre-filter: freshness
         self._stale_after_ms = stale_after_ms
         self._min_volume_lots = min_volume_lots
+        self._health_callback = health_callback
+        self._consecutive_failures = 0
 
         # Время последнего обновления котировок (monotonic ms) по тикеру
         self._data_received_at: dict[str, float] = {}
@@ -117,14 +121,27 @@ class MarketScanner:
     # ── Шаги 1–2: Ingestion ──────────────────────────────────────────────────
 
     async def _scan(self) -> None:
+        scan_started = time.monotonic()
         self._cycle += 1
+        update_health(last_scan_at=time.time())
         logger.info("[Scan #%d] Старт %s", self._cycle, datetime.now().strftime("%H:%M:%S"))
 
         # Шаг 1: список всех торгуемых тикеров
         tickers = await get_all_moex_tickers(SCAN_BOARD)
         if not tickers:
+            self._consecutive_failures += 1
+            update_health(
+                consecutive_failures=self._consecutive_failures,
+                last_error="MOEX вернул пустой список тикеров",
+            )
             logger.warning("Список тикеров пустой, пропускаем цикл")
+            if self._health_callback and self._consecutive_failures in (3, 10):
+                await self._health_callback(
+                    f"MOEX недоступен: {self._consecutive_failures} неудачных циклов подряд"
+                )
             return
+        recovered = self._consecutive_failures >= 3
+        self._consecutive_failures = 0
         logger.info("[Scan #%d] Тикеров: %d", self._cycle, len(tickers))
 
         # Шаг 2: пакетный запрос котировок
@@ -160,6 +177,16 @@ class MarketScanner:
         final_alerts = self._post_filter(raw_alerts)
 
         logger.info("[Scan #%d] Алертов (raw/final): %d / %d", self._cycle, len(raw_alerts), len(final_alerts))
+        duration = round(time.monotonic() - scan_started, 2)
+        update_health(
+            last_success_at=time.time(),
+            ticker_count=len(tickers),
+            scan_duration_seconds=duration,
+            consecutive_failures=0,
+            last_error=None,
+        )
+        if recovered and self._health_callback:
+            await self._health_callback(f"MOEX снова доступен: получено {len(tickers)} тикеров")
 
         # Шаг 6: Dispatch
         if final_alerts and self.alert_callback:

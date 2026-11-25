@@ -4,11 +4,13 @@
 Render сам выставляет переменную PORT (обычно 10000).
 """
 import os
+import json
 import time
 import urllib.request
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
+from health_state import get_health
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +19,27 @@ SELF_PING_INTERVAL = 10 * 60  # 10 минут
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        if self.path.startswith("/live"):
+            body = b'{"status":"alive"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        state = get_health()
+        now = time.time()
+        last_success = state.get("last_success_at")
+        startup_age = now - state["started_at"]
+        healthy = bool(last_success and now - last_success < 300)
+        starting = last_success is None and startup_age < 180
+        status = "ok" if healthy else ("starting" if starting else "degraded")
+        body = json.dumps({"status": status, **state}, ensure_ascii=False).encode("utf-8")
+        self.send_response(200 if healthy or starting else 503)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(b"AnomalyAlert bot is running OK")
+        self.wfile.write(body)
 
     def do_HEAD(self):
         self.send_response(200)

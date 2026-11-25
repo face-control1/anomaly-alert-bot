@@ -2,6 +2,8 @@
 Все хэндлеры бота: команды, callback-кнопки, платежи.
 """
 import logging
+import os
+import html
 from datetime import timezone
 
 from aiogram import Router, F, Bot
@@ -10,6 +12,7 @@ from aiogram.types import (
     Message, CallbackQuery,
     LabeledPrice, PreCheckoutQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
+    FSInputFile,
 )
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -42,8 +45,18 @@ from database.db import (
     get_favorites,
     record_payment,
     get_payment_user_id,
+    get_user_settings,
+    toggle_user_setting,
+    get_recent_alerts,
 )
-from bot.keyboards import main_menu_kb, buy_menu_kb, back_kb, tickers_kb, favorites_kb
+from bot.keyboards import (
+    main_menu_kb,
+    buy_menu_kb,
+    back_kb,
+    tickers_kb,
+    favorites_kb,
+    settings_kb,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -67,16 +80,22 @@ class AdminState(StatesGroup):
 @router.message(CommandStart())
 async def cmd_start(msg: Message) -> None:
     upsert_user(msg.from_user.id, msg.from_user.username, msg.from_user.first_name)
-    name = msg.from_user.first_name or "трейдер"
+    name = html.escape(msg.from_user.first_name or "трейдер")
+    banner_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "moex-help-banner.png")
+    if os.path.exists(banner_path):
+        await msg.answer_photo(
+            FSInputFile(banner_path),
+            caption="<b>MOEX HELP</b>  ·  Умный радар рынка",
+            parse_mode="HTML",
+        )
     await msg.answer(
-        f"👋 Привет, <b>{name}</b>!\n\n"
-        "Я <b>AnomalyAlert</b> — бот для отслеживания аномальных событий "
-        "на <b>Московской бирже</b> и <b>СПБ Бирже</b>.\n\n"
-        "🔔 Я мониторю:\n"
-        "• Аномальные объёмы торгов\n"
-        "• Резкие движения цены (>3%)\n"
-        "• Пробои полос Боллинджера\n\n"
-        "Выбери действие:",
+        f"<b>MOEX HELP</b>  ·  умный радар рынка\n\n"
+        f"Добро пожаловать, <b>{name}</b> 👋\n\n"
+        "Я отслеживаю акции Московской биржи и сообщаю только о заметных событиях:\n\n"
+        "🔥 необычный торговый объём\n"
+        "📈 резкое движение цены\n"
+        "⚡ выход за границы волатильности\n\n"
+        "Настройте собственную ленту — и получайте только нужные сигналы.",
         reply_markup=main_menu_kb(),
         parse_mode="HTML",
     )
@@ -87,8 +106,10 @@ async def cmd_start(msg: Message) -> None:
 @router.callback_query(F.data == "main_menu")
 async def cb_main_menu(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
-        "Главное меню — выбери действие:",
+        "<b>MOEX HELP</b>  ·  панель управления\n\n"
+        "Рынок меняется быстро. Выберите нужный раздел:",
         reply_markup=main_menu_kb(),
+        parse_mode="HTML",
     )
     await cb.answer()
 
@@ -109,6 +130,53 @@ async def cb_about(cb: CallbackQuery) -> None:
         reply_markup=back_kb(),
         parse_mode="HTML",
     )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "settings")
+async def cb_settings(cb: CallbackQuery) -> None:
+    settings = get_user_settings(cb.from_user.id)
+    await cb.message.edit_text(
+        "<b>🎛 Настройки сигналов</b>\n\n"
+        "Нажмите на пункт, чтобы включить или отключить его.\n"
+        "Тихие часы работают по московскому времени.",
+        reply_markup=settings_kb(settings),
+        parse_mode="HTML",
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("setting:"))
+async def cb_toggle_setting(cb: CallbackQuery) -> None:
+    setting = cb.data.split(":", 1)[1]
+    settings = toggle_user_setting(cb.from_user.id, setting)
+    await cb.message.edit_reply_markup(reply_markup=settings_kb(settings))
+    await cb.answer("Настройка сохранена")
+
+
+@router.callback_query(F.data == "recent_alerts")
+async def cb_recent_alerts(cb: CallbackQuery) -> None:
+    alerts = get_recent_alerts(10)
+    if not alerts:
+        text = (
+            "<b>📡 Лента сигналов</b>\n\n"
+            "Сигналов пока нет. Лента обновится, когда рынок покажет заметную аномалию."
+        )
+    else:
+        icons = {
+            "volume_spike": "🔥",
+            "price_move": "📈",
+            "bollinger": "⚡",
+            "combined": "🚨",
+        }
+        lines = ["<b>📡 Последние сигналы рынка</b>", ""]
+        for alert in alerts:
+            icon = icons.get(alert["alert_type"], "•")
+            headline = html.escape(str(alert.get("headline") or alert["alert_type"]))
+            ticker = html.escape(str(alert["ticker"]))
+            lines.append(f"{icon} <b>{ticker}</b> · {headline}")
+        text = "\n".join(lines)
+    await cb.message.edit_text(text, reply_markup=back_kb(), parse_mode="HTML")
     await cb.answer()
 
 
@@ -190,28 +258,50 @@ async def cb_buy(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
+def _stars_plan(months: int) -> tuple[int, str]:
+    monthly = get_subscription_price()["stars"]
+    if months == 3:
+        return round(monthly * 2.7), "Подписка на 3 месяца"
+    if months == 12:
+        return monthly * 9, "Подписка на 12 месяцев"
+    return monthly, "Подписка на 30 дней"
+
+
 @router.callback_query(F.data == "pay_stars")
+@router.callback_query(F.data.startswith("pay_stars:"))
 async def cb_pay_stars(cb: CallbackQuery, bot: Bot) -> None:
-    price = get_subscription_price()["stars"]
+    months = 1
+    if ":" in cb.data:
+        months = int(cb.data.split(":", 1)[1])
+    if months not in (1, 3, 12):
+        await cb.answer("Неизвестный тариф", show_alert=True)
+        return
+    price, label = _stars_plan(months)
     await bot.send_invoice(
         chat_id=cb.from_user.id,
         title=SUBSCRIPTION_TITLE,
         description=SUBSCRIPTION_DESCRIPTION,
-        payload=f"sub_{cb.from_user.id}",
+        payload=f"sub_{cb.from_user.id}_{months}",
         currency="XTR",   # Telegram Stars
-        prices=[LabeledPrice(label="Подписка 30 дней", amount=price)],
+        prices=[LabeledPrice(label=label, amount=price)],
     )
     await cb.answer()
 
 
 @router.pre_checkout_query()
 async def pre_checkout(query: PreCheckoutQuery) -> None:
-    expected_price = get_subscription_price()["stars"]
-    expected_payload = f"sub_{query.from_user.id}"
+    parts = query.invoice_payload.split("_")
+    try:
+        payload_user_id = int(parts[1])
+        months = int(parts[2])
+    except (IndexError, ValueError):
+        payload_user_id, months = 0, 0
+    expected_price = _stars_plan(months)[0] if months in (1, 3, 12) else -1
     is_valid = (
         query.currency == "XTR"
         and query.total_amount == expected_price
-        and query.invoice_payload == expected_payload
+        and payload_user_id == query.from_user.id
+        and months in (1, 3, 12)
     )
     await query.answer(
         ok=is_valid,
@@ -222,16 +312,23 @@ async def pre_checkout(query: PreCheckoutQuery) -> None:
 @router.message(F.successful_payment)
 async def payment_success(msg: Message) -> None:
     p = msg.successful_payment
+    try:
+        months = int(p.invoice_payload.rsplit("_", 1)[1])
+    except (ValueError, IndexError):
+        months = 1
+    if months not in (1, 3, 12):
+        logger.error("Некорректный тариф в successful_payment: %s", p.invoice_payload)
+        return
     charge_id = p.telegram_payment_charge_id
     is_new = record_payment(msg.from_user.id, charge_id, p.total_amount, p.currency)
     if is_new:
-        activate_paid(msg.from_user.id, 1)
+        activate_paid(msg.from_user.id, months)
     else:
         logger.warning("Повторный successful_payment проигнорирован: charge_id=%s", charge_id)
     await msg.answer(
         "✅ <b>Оплата прошла успешно!</b>\n\n"
         f"Вы оплатили <b>{p.total_amount} ⭐ Stars</b>.\n"
-        "Подписка активна на 30 дней. Алерты уже идут!\n\n"
+        f"Подписка активна на <b>{months} мес.</b> Алерты уже идут!\n\n"
         "Настройте персональные тикеры через меню «📋 Мои тикеры».",
         reply_markup=main_menu_kb(),
         parse_mode="HTML",

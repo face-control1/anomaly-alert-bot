@@ -112,6 +112,16 @@ def init_db() -> None:
                     created_at  DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id       BIGINT PRIMARY KEY REFERENCES users(user_id),
+                    volume_alerts BOOLEAN NOT NULL DEFAULT TRUE,
+                    price_alerts  BOOLEAN NOT NULL DEFAULT TRUE,
+                    band_alerts   BOOLEAN NOT NULL DEFAULT TRUE,
+                    quiet_hours   BOOLEAN NOT NULL DEFAULT FALSE,
+                    paused        BOOLEAN NOT NULL DEFAULT FALSE
+                )
+            """)
             cur.close()
         else:
             conn.executescript("""
@@ -148,6 +158,14 @@ def init_db() -> None:
                     alert_type  TEXT NOT NULL,
                     headline    TEXT,
                     created_at  REAL NOT NULL DEFAULT (unixepoch())
+                );
+                CREATE TABLE IF NOT EXISTS user_settings (
+                    user_id       INTEGER PRIMARY KEY REFERENCES users(user_id),
+                    volume_alerts INTEGER NOT NULL DEFAULT 1,
+                    price_alerts  INTEGER NOT NULL DEFAULT 1,
+                    band_alerts   INTEGER NOT NULL DEFAULT 1,
+                    quiet_hours   INTEGER NOT NULL DEFAULT 0,
+                    paused        INTEGER NOT NULL DEFAULT 0
                 );
             """)
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
@@ -311,6 +329,27 @@ def log_alert(ticker: str, exchange: str, alert_type: str, headline: str | None 
             )
 
 
+def get_recent_alerts(limit: int = 10) -> list[dict]:
+    limit = max(1, min(int(limit), 25))
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(
+                "SELECT ticker, exchange, alert_type, headline, created_at "
+                "FROM alerts_log ORDER BY created_at DESC LIMIT %s",
+                (limit,),
+            )
+            rows = cur.fetchall()
+            cur.close()
+        else:
+            rows = conn.execute(
+                "SELECT ticker, exchange, alert_type, headline, created_at "
+                "FROM alerts_log ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_favorites(user_id: int) -> list[dict]:
     """ÃÂÃÂÃÂÃÂµÃÂÃÂÃÂÃÂ½ÃÂÃÂÃÂÃÂÃÂÃÂ ÃÂÃÂ¸ÃÂÃÂ·ÃÂÃÂ±ÃÂÃÂÃÂÃÂ°ÃÂÃÂ½ÃÂÃÂ½ÃÂÃÂÃÂÃÂµ ÃÂÃÂÃÂÃÂ¸ÃÂÃÂºÃÂÃÂµÃÂÃÂÃÂÃÂ ÃÂÃÂ¿ÃÂÃÂ¾ÃÂÃÂ»ÃÂÃÂÃÂÃÂ·ÃÂÃÂ¾ÃÂÃÂ²ÃÂÃÂ°ÃÂÃÂÃÂÃÂµÃÂÃÂ»ÃÂÃÂ: [{"ticker": ..., "exchange": ...}]."""
     with get_conn() as conn:
@@ -347,7 +386,7 @@ def get_user_tickers(user_id: int) -> list[str]:
             ).fetchall()]
 
 
-def add_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
+def add_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> bool:
     with get_conn() as conn:
         if USE_POSTGRES:
             cur = conn.cursor()
@@ -355,12 +394,15 @@ def add_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
                 f"INSERT INTO tickers (user_id, ticker, exchange) VALUES ({PH}, {PH}, {PH}) ON CONFLICT DO NOTHING",
                 (user_id, ticker.upper(), exchange)
             )
+            inserted = cur.rowcount == 1
             cur.close()
+            return inserted
         else:
-            conn.execute(
+            cur = conn.execute(
                 "INSERT OR IGNORE INTO tickers (user_id, ticker, exchange) VALUES (?, ?, ?)",
                 (user_id, ticker.upper(), exchange)
             )
+            return cur.rowcount == 1
 
 
 def remove_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
@@ -444,6 +486,52 @@ def get_payment_user_id(telegram_charge: str) -> int | None:
     return int(row[0]) if row else None
 
 
+def get_user_settings(user_id: int) -> dict:
+    defaults = {
+        "volume_alerts": True,
+        "price_alerts": True,
+        "band_alerts": True,
+        "quiet_hours": False,
+        "paused": False,
+    }
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(f"SELECT * FROM user_settings WHERE user_id = {PH}", (user_id,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+    if not row:
+        return defaults
+    return {key: bool(row[key]) for key in defaults}
+
+
+def toggle_user_setting(user_id: int, setting: str) -> dict:
+    allowed = {"volume_alerts", "price_alerts", "band_alerts", "quiet_hours", "paused"}
+    if setting not in allowed:
+        raise ValueError("Unknown user setting")
+    ensure_user(user_id)
+    current = get_user_settings(user_id)
+    new_value = not current[setting]
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO user_settings (user_id, {setting}) VALUES ({PH}, {PH}) "
+                f"ON CONFLICT (user_id) DO UPDATE SET {setting} = EXCLUDED.{setting}",
+                (user_id, new_value),
+            )
+            cur.close()
+        else:
+            conn.execute(
+                f"INSERT INTO user_settings (user_id, {setting}) VALUES (?, ?) "
+                f"ON CONFLICT (user_id) DO UPDATE SET {setting} = excluded.{setting}",
+                (user_id, int(new_value)),
+            )
+    return get_user_settings(user_id)
+
+
 # Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 # ÃÂÃÂ»ÃÂ¸ÃÂ°ÃÂÃÂ ÃÂ¸ ÃÂÃÂ¾ÃÂ²ÃÂ¼ÃÂµÃÂÃÂÃÂ¸ÃÂ¼ÃÂÃÂµ ÃÂÃÂÃÂ½ÃÂºÃÂÃÂ¸ÃÂ¸ ÃÂ´ÃÂ»ÃÂ handlers.py
 # Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
@@ -481,9 +569,9 @@ def deactivate_subscription(user_id: int) -> None:
             )
 
 
-def add_user_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
+def add_user_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> bool:
     """ÃÂÃÂ»ÃÂ¸ÃÂ°ÃÂ ÃÂ´ÃÂ»ÃÂ add_ticker."""
-    add_ticker(user_id, ticker, exchange)
+    return add_ticker(user_id, ticker, exchange)
 
 
 def remove_user_ticker(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
@@ -563,9 +651,9 @@ def grant_trial(user_id: int) -> bool:
     return True
 
 
-def add_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
+def add_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> bool:
     """ÃÂÃÂ»ÃÂ¸ÃÂ°ÃÂ ÃÂ´ÃÂ»ÃÂ add_ticker."""
-    add_ticker(user_id, ticker, exchange)
+    return add_ticker(user_id, ticker, exchange)
 
 
 def remove_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> None:

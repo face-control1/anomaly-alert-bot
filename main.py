@@ -5,17 +5,25 @@ import asyncio
 import logging
 import sys
 import os
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # Добавляем корневую папку в PYTHONPATH
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import BOT_TOKEN, LOG_LEVEL, LOG_FILE, ADMIN_IDS, SCAN_INTERVAL
-from database.db import init_db, get_all_active_user_ids, log_alert, get_favorites
+from database.db import (
+    init_db,
+    get_all_active_user_ids,
+    log_alert,
+    get_favorites,
+    get_user_settings,
+)
 from bot.handlers import router
 from market.scanner import MarketScanner
 from market.anomaly import Alert
@@ -55,9 +63,32 @@ async def make_alert_sender(bot: Bot):
                 pass
 
             text = alert.format_message()
+            alert_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="📊 Открыть на MOEX",
+                        url=f"https://www.moex.com/ru/issue.aspx?board=TQBR&code={alert.ticker}",
+                    ),
+                    InlineKeyboardButton(text="🎛 Настройки", callback_data="settings"),
+                ]
+            ])
 
             for uid in user_ids:
                 try:
+                    settings = get_user_settings(uid)
+                    if settings["paused"]:
+                        continue
+                    if settings["quiet_hours"]:
+                        msk_hour = datetime.now(timezone(timedelta(hours=3))).hour
+                        if msk_hour >= 23 or msk_hour < 7:
+                            continue
+                    type_enabled = {
+                        "volume_spike": settings["volume_alerts"],
+                        "price_move": settings["price_alerts"],
+                        "bollinger": settings["band_alerts"],
+                    }
+                    if alert.alert_type != "combined" and not type_enabled.get(alert.alert_type, True):
+                        continue
                     # Если у пользователя есть избранное — шлём только алерты по его акциям
                     favs = get_favorites(uid)
                     if favs:
@@ -67,7 +98,7 @@ async def make_alert_sender(bot: Bot):
                         )
                         if not is_in_favs:
                             continue
-                    await bot.send_message(uid, text, parse_mode="HTML")
+                    await bot.send_message(uid, text, parse_mode="HTML", reply_markup=alert_kb)
                 except Exception as e:
                     logger.debug("Не удалось отправить алерт пользователю %d: %s", uid, e)
 
@@ -168,10 +199,18 @@ async def main() -> None:
     send_orderbook = await make_orderbook_callback(bot)
     send_corp_reports = await make_corp_reports_callback(bot)
 
+    async def notify_admins(message: str) -> None:
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, f"🛠 <b>Состояние сканера</b>\n\n{message}")
+            except Exception as exc:
+                logger.warning("Не удалось уведомить администратора %s: %s", admin_id, exc)
+
     # Запускаем основной сканер рынка
     scanner = MarketScanner(
         alert_callback=send_alerts,
         interval_seconds=SCAN_INTERVAL,
+        health_callback=notify_admins,
     )
     scanner.start()
     logger.info("Сканер рынка запущен (интервал %d сек)", SCAN_INTERVAL)
