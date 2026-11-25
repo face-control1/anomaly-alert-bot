@@ -195,6 +195,18 @@ def init_db() -> None:
                     created_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
                 )
             """)
+            cur.execute("ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS username TEXT")
+            cur.execute("ALTER TABLE admin_sessions ADD COLUMN IF NOT EXISTS role TEXT")
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS admin_staff (
+                    id SERIAL PRIMARY KEY,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'support',
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at DOUBLE PRECISION NOT NULL DEFAULT EXTRACT(EPOCH FROM NOW())
+                )
+            """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS admin_audit (
                     id SERIAL PRIMARY KEY,
@@ -285,6 +297,14 @@ def init_db() -> None:
                     expires_at REAL NOT NULL,
                     created_at REAL NOT NULL DEFAULT (unixepoch())
                 );
+                CREATE TABLE IF NOT EXISTS admin_staff (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'support',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at REAL NOT NULL DEFAULT (unixepoch())
+                );
                 CREATE TABLE IF NOT EXISTS admin_audit (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     admin_id INTEGER NOT NULL,
@@ -321,6 +341,11 @@ def init_db() -> None:
                 conn.execute("ALTER TABLE user_settings ADD COLUMN min_score INTEGER NOT NULL DEFAULT 60")
             if "direction" not in setting_columns:
                 conn.execute("ALTER TABLE user_settings ADD COLUMN direction TEXT NOT NULL DEFAULT 'all'")
+            session_columns = {row[1] for row in conn.execute("PRAGMA table_info(admin_sessions)").fetchall()}
+            if "username" not in session_columns:
+                conn.execute("ALTER TABLE admin_sessions ADD COLUMN username TEXT")
+            if "role" not in session_columns:
+                conn.execute("ALTER TABLE admin_sessions ADD COLUMN role TEXT")
     logger.info("DB tables ready (backend: %s)", "PostgreSQL" if USE_POSTGRES else "SQLite")
 
 
@@ -1282,7 +1307,54 @@ def verify_admin_session(token: str) -> int | None:
     return int(row[0]) if row else None
 
 
-def create_admin_session(user_id: int, ttl_hours: int = 12) -> str:
+def _hash_admin_password(password: str, salt: str | None = None) -> str:
+    if len(password) < 10:
+        raise ValueError("Password must contain at least 10 characters")
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 240_000).hex()
+    return f"pbkdf2_sha256$240000${salt}${digest}"
+
+
+def _verify_admin_password(password: str, stored: str) -> bool:
+    try:
+        _, rounds, salt, expected = stored.split("$", 3)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), int(rounds)).hex()
+        return secrets.compare_digest(actual, expected)
+    except Exception:
+        return False
+
+
+def ensure_admin_owner(username: str, password: str) -> None:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor()
+            cur.execute(f"SELECT id FROM admin_staff WHERE username = {PH}", (username,))
+            exists = cur.fetchone()
+            if not exists:
+                cur.execute(f"INSERT INTO admin_staff (username, password_hash, role) VALUES ({PH}, {PH}, 'owner')", (username, _hash_admin_password(password)))
+            cur.close()
+        else:
+            exists = conn.execute("SELECT id FROM admin_staff WHERE username = ?", (username,)).fetchone()
+            if not exists:
+                conn.execute("INSERT INTO admin_staff (username, password_hash, role) VALUES (?, ?, 'owner')", (username, _hash_admin_password(password)))
+
+
+def authenticate_admin_staff(username: str, password: str) -> dict | None:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(f"SELECT id, username, password_hash, role, active FROM admin_staff WHERE username = {PH}", (username,))
+            row = cur.fetchone()
+            cur.close()
+        else:
+            row = conn.execute("SELECT id, username, password_hash, role, active FROM admin_staff WHERE username = ?", (username,)).fetchone()
+    if not row or not bool(row["active"] if hasattr(row, "keys") else row[4]):
+        return None
+    data = dict(row) if hasattr(row, "keys") else {"id": row[0], "username": row[1], "password_hash": row[2], "role": row[3], "active": row[4]}
+    return data if _verify_admin_password(password, data["password_hash"]) else None
+
+
+def create_admin_session(user_id: int, ttl_hours: int = 12, username: str = "admin", role: str = "owner") -> str:
     """Create a web session after credentials have been verified."""
     token = secrets.token_urlsafe(32)
     digest = hashlib.sha256(token.encode()).hexdigest()
@@ -1291,16 +1363,79 @@ def create_admin_session(user_id: int, ttl_hours: int = 12) -> str:
         if USE_POSTGRES:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO admin_sessions (token_hash, user_id, expires_at) VALUES ({PH}, {PH}, {PH})",
-                (digest, user_id, now + ttl_hours * 3600),
+                f"INSERT INTO admin_sessions (token_hash, user_id, expires_at, username, role) VALUES ({PH}, {PH}, {PH}, {PH}, {PH})",
+                (digest, user_id, now + ttl_hours * 3600, username, role),
             )
             cur.close()
         else:
             conn.execute(
-                "INSERT INTO admin_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
-                (digest, user_id, now + ttl_hours * 3600),
+                "INSERT INTO admin_sessions (token_hash, user_id, expires_at, username, role) VALUES (?, ?, ?, ?, ?)",
+                (digest, user_id, now + ttl_hours * 3600, username, role),
             )
     return token
+
+
+def verify_admin_session_info(token: str) -> dict | None:
+    if not token:
+        return None
+    digest, now = hashlib.sha256(token.encode()).hexdigest(), datetime.now(timezone.utc).timestamp()
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(f"SELECT user_id, username, role FROM admin_sessions WHERE token_hash = {PH} AND expires_at > {PH}", (digest, now))
+            row = cur.fetchone(); cur.close()
+        else:
+            row = conn.execute("SELECT user_id, username, role FROM admin_sessions WHERE token_hash = ? AND expires_at > ?", (digest, now)).fetchone()
+    return dict(row) if row else None
+
+
+def list_admin_staff() -> list[dict]:
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor); cur.execute("SELECT id, username, role, active, created_at FROM admin_staff ORDER BY id"); rows = cur.fetchall(); cur.close()
+        else:
+            rows = conn.execute("SELECT id, username, role, active, created_at FROM admin_staff ORDER BY id").fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_admin_staff(username: str, password: str, role: str) -> None:
+    username = username.strip().lower()
+    if not username or role not in {"admin", "support", "analyst"}:
+        raise ValueError("Invalid staff account")
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(); cur.execute(f"INSERT INTO admin_staff (username, password_hash, role) VALUES ({PH}, {PH}, {PH})", (username, _hash_admin_password(password), role)); cur.close()
+        else:
+            conn.execute("INSERT INTO admin_staff (username, password_hash, role) VALUES (?, ?, ?)", (username, _hash_admin_password(password), role))
+
+
+def update_admin_staff(staff_id: int, *, password: str | None = None, role: str | None = None, active: bool | None = None) -> None:
+    updates, params = [], []
+    if password is not None: updates.append(f"password_hash = {PH}"); params.append(_hash_admin_password(password))
+    if role is not None:
+        if role not in {"admin", "support", "analyst"}: raise ValueError("Invalid role")
+        updates.append(f"role = {PH}"); params.append(role)
+    if active is not None: updates.append(f"active = {PH}"); params.append(bool(active) if USE_POSTGRES else int(active))
+    if not updates: return
+    params.append(staff_id)
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(); cur.execute(f"UPDATE admin_staff SET {', '.join(updates)} WHERE id = {PH} AND role <> 'owner'", tuple(params)); cur.close()
+        else:
+            conn.execute(f"UPDATE admin_staff SET {', '.join(updates)} WHERE id = ? AND role <> 'owner'", tuple(params))
+
+
+def change_admin_password(username: str, current_password: str, new_password: str) -> bool:
+    staff = authenticate_admin_staff(username, current_password)
+    if not staff:
+        return False
+    password_hash = _hash_admin_password(new_password)
+    with get_conn() as conn:
+        if USE_POSTGRES:
+            cur = conn.cursor(); cur.execute(f"UPDATE admin_staff SET password_hash = {PH} WHERE username = {PH}", (password_hash, username)); cur.close()
+        else:
+            conn.execute("UPDATE admin_staff SET password_hash = ? WHERE username = ?", (password_hash, username))
+    return True
 
 
 def revoke_admin_session(token: str) -> None:

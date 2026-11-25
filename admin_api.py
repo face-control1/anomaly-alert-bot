@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
 import logging
 import os
@@ -10,13 +9,19 @@ import time
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
-from config import ADMIN_IDS
 from health_state import get_health
 from database.db import (
     activate_paid,
     deactivate_subscription,
     disable_promo_code,
     create_admin_session,
+    ensure_admin_owner,
+    authenticate_admin_staff,
+    verify_admin_session_info,
+    list_admin_staff,
+    create_admin_staff,
+    update_admin_staff,
+    change_admin_password,
     get_admin_audit,
     get_all_active_user_ids,
     get_all_users,
@@ -87,12 +92,23 @@ def _read_json(handler) -> dict:
     return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
-def _admin_id(handler) -> int | None:
+def _admin_info(handler) -> dict | None:
     auth = handler.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         return None
-    admin_id = verify_admin_session(auth[7:].strip())
-    return admin_id if admin_id in ADMIN_IDS else None
+    return verify_admin_session_info(auth[7:].strip())
+
+
+def _allowed(role: str, path: str, method: str) -> bool:
+    if role == "owner":
+        return True
+    if path.startswith("/api/admin/staff"):
+        return False
+    if path in {"/api/admin/config", "/api/admin/promo", "/api/admin/promo/disable", "/api/admin/broadcast"}:
+        return role == "admin"
+    if path in {"/api/admin/trial", "/api/admin/subscription", "/api/admin/deactivate", "/api/admin/message"}:
+        return role in {"admin", "support"}
+    return method == "GET" or path in {"/api/admin/logout", "/api/admin/password"}
 
 
 def _rate_limited(ip: str) -> bool:
@@ -155,24 +171,27 @@ def handle_admin_request(handler) -> bool:
             if not expected_password:
                 _send(handler, 503, {"error": "web_login_not_configured"})
                 return True
-            if not (hmac.compare_digest(username, expected_user) and hmac.compare_digest(password, expected_password)):
+            ensure_admin_owner(expected_user, expected_password)
+            staff = authenticate_admin_staff(username, password)
+            if not staff:
                 _send(handler, 401, {"error": "invalid_credentials"})
                 return True
-            admin_id = int(os.getenv("ADMIN_WEB_OWNER_ID", "5434913402"))
-            if admin_id not in ADMIN_IDS:
-                _send(handler, 403, {"error": "admin_not_allowed"})
-                return True
-            token = create_admin_session(admin_id)
+            admin_id = int(staff["id"])
+            token = create_admin_session(admin_id, username=staff["username"], role=staff["role"])
             log_admin_action(admin_id, "web_login", "Web admin session created")
-            _send(handler, 200, {"token": token, "admin_id": admin_id, "expires_in": 43200})
+            _send(handler, 200, {"token": token, "admin_id": admin_id, "username": staff["username"], "role": staff["role"], "expires_in": 43200})
         except Exception:
             logger.exception("Admin login failed")
             _send(handler, 500, {"error": "server_error"})
         return True
 
-    admin_id = _admin_id(handler)
-    if not admin_id:
+    admin = _admin_info(handler)
+    if not admin:
         _send(handler, 401, {"error": "unauthorized"})
+        return True
+    admin_id, role = int(admin["user_id"]), str(admin.get("role") or "analyst")
+    if not _allowed(role, parsed.path, handler.command):
+        _send(handler, 403, {"error": "forbidden"})
         return True
 
     try:
@@ -184,6 +203,7 @@ def handle_admin_request(handler) -> bool:
                 "promos": get_promo_codes(),
                 "performance": get_signal_performance(),
                 "recent_alerts": get_recent_alerts(12),
+                "current_admin": {"username": admin.get("username"), "role": role},
             })
         elif handler.command == "GET" and parsed.path == "/api/admin/users":
             limit = min(int(parse_qs(parsed.query).get("limit", [100])[0]), 500)
@@ -192,6 +212,25 @@ def handle_admin_request(handler) -> bool:
             _send(handler, 200, {"items": get_admin_audit(100)})
         elif handler.command == "GET" and parsed.path == "/api/admin/payments":
             _send(handler, 200, {"items": get_recent_payments(200)})
+        elif handler.command == "GET" and parsed.path == "/api/admin/staff":
+            _send(handler, 200, {"items": list_admin_staff()})
+        elif handler.command == "POST" and parsed.path == "/api/admin/staff":
+            data = _read_json(handler)
+            create_admin_staff(str(data["username"]), str(data["password"]), str(data["role"]))
+            log_admin_action(admin_id, "create_staff", f"username={data['username']}; role={data['role']}")
+            _send(handler, 200, {"ok": True, "items": list_admin_staff()})
+        elif handler.command == "POST" and parsed.path == "/api/admin/staff/update":
+            data = _read_json(handler)
+            update_admin_staff(int(data["id"]), password=data.get("password"), role=data.get("role"), active=data.get("active"))
+            log_admin_action(admin_id, "update_staff", f"id={data['id']}")
+            _send(handler, 200, {"ok": True, "items": list_admin_staff()})
+        elif handler.command == "POST" and parsed.path == "/api/admin/password":
+            data = _read_json(handler)
+            if not change_admin_password(str(admin.get("username")), str(data["current_password"]), str(data["new_password"])):
+                _send(handler, 400, {"error": "wrong_current_password"})
+            else:
+                log_admin_action(admin_id, "change_password", "Own password changed")
+                _send(handler, 200, {"ok": True})
         elif handler.command == "POST" and parsed.path == "/api/admin/trial":
             data = _read_json(handler)
             user_id, hours = int(data["user_id"]), int(data.get("hours", 24))
