@@ -15,6 +15,8 @@ services:
         value: "250"
       - key: POLL_INTERVAL_SEC
         value: "60"
+      - key: MOEX_ISS_BASE
+        value: "http://iss.moex.com/iss"
       - key: DB_PATH
         value: "data/bot.db"
       - key: LOG_FILE

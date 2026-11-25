@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import asyncio
 import ssl
+import os
 from typing import Optional
 
 import certifi
@@ -13,7 +14,9 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://iss.moex.com/iss"
+# Публичный ISS официально поддерживает HTTP. Это обходит повреждённую TLS-цепочку
+# MOEX в некоторых регионах Render; для приватных данных этот канал не используется.
+BASE_URL = os.getenv("MOEX_ISS_BASE", "http://iss.moex.com/iss").rstrip("/")
 _client: Optional[httpx.AsyncClient] = None
 
 

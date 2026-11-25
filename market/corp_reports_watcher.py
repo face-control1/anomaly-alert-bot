@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # ─── MOEX ISS endpoint ──────────────────────────────────────────────────────────────
 
 CORP_REPORTS_URL = (
-    "https://iss.moex.com/iss/sitenews.json"
+    "http://iss.moex.com/iss/sitenews.json"
     "?rubric=12"            # корпоративные события
     "&limit=50"
     "&lang=ru"

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ─── Настройки ───────────────────────────────────────────────────────────────
 
 MOEX_ORDERBOOK_URL = (
-    "https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
+    "http://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
     "securities/{ticker}/orderbook.json?depth=20"
 )
 
