@@ -93,7 +93,7 @@ async def make_alert_sender(bot: Bot):
             try:
                 from market.moex import get_moex_candles
                 from market.chart import render_signal_chart
-                chart_candles = await get_moex_candles(alert.ticker, "TQBR", interval=1, n_bars=60)
+                chart_candles = await get_moex_candles(alert.ticker, "TQBR", interval=1, n_bars=100)
                 chart = render_signal_chart(alert.ticker, chart_candles, alert.current_price)
             except Exception as exc:
                 logger.debug("Не удалось построить график %s: %s", alert.ticker, exc)

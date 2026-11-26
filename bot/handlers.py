@@ -1011,9 +1011,9 @@ async def cmd_id(msg: Message) -> None:
 def _yukassa_plans_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора тарифа ЮKassa."""
     try:
-        from bot.payments_yukassa import PLANS
+        from bot.ruble_plans import RUBLE_PLANS
         buttons = []
-        for key, plan in PLANS.items():
+        for key, plan in RUBLE_PLANS.items():
             buttons.append([InlineKeyboardButton(
                 text=f"💳 {plan['label']} — {plan['price']} ₽",
                 callback_data=f"yk_plan:{key}",
@@ -1029,20 +1029,15 @@ async def cb_pay_yukassa(cb: CallbackQuery) -> None:
     """Показывает тарифы ЮKassa."""
     try:
         from bot.payments_yukassa import YUKASSA_AVAILABLE
-        if not YUKASSA_AVAILABLE:
-            await cb.answer(
-                "Оплата картой временно недоступна. Используйте Telegram Stars.",
-                show_alert=True,
-            )
-            return
+        is_ready = YUKASSA_AVAILABLE
     except ImportError:
-        await cb.answer("Оплата картой недоступна.", show_alert=True)
-        return
+        is_ready = False
 
     await cb.message.edit_text(
-        "💳 <b>Оплата картой / СБП</b>\n\n"
-        "Выберите тариф:\n\n"
-        "✅ Оплата через банковскую карту или СБП\n"
+        "💳 <b>Подписка за рубли</b>\n\n"
+        + ("Выберите тариф:\n\n" if is_ready else
+           "Рублёвые тарифы уже подготовлены. Подключение оплаты через ЮKassa завершается — списаний пока не будет.\n\n")
+        + "✅ Банковская карта или СБП\n"
         "🔒 Безопасная оплата через ЮKassa",
         reply_markup=_yukassa_plans_kb(),
         parse_mode="HTML",
@@ -1063,6 +1058,14 @@ async def cb_yukassa_plan(cb: CallbackQuery) -> None:
     plan = PLANS.get(plan_key)
     if not plan:
         await cb.answer("Неизвестный тариф.", show_alert=True)
+        return
+
+    from bot.payments_yukassa import YUKASSA_AVAILABLE
+    if not YUKASSA_AVAILABLE:
+        await cb.answer(
+            f"Тариф «{plan['label']}» — {plan['price']} ₽. Оплата скоро будет подключена.",
+            show_alert=True,
+        )
         return
 
     await cb.answer("Создаём ссылку на оплату...", show_alert=False)
@@ -1131,22 +1134,14 @@ async def cb_trial_yukassa(cb: CallbackQuery) -> None:
 @router.message(Command("subscribe"))
 async def cmd_subscribe(msg: Message) -> None:
     """Показывает меню подписки."""
-    try:
-        from bot.payments_yukassa import get_subscription, TRIAL_DAYS, YUKASSA_AVAILABLE
-        sub = get_subscription(msg.from_user.id)
-        yukassa_btn = YUKASSA_AVAILABLE
-    except ImportError:
-        sub = None
-        yukassa_btn = False
+    sub = get_subscription_info(msg.from_user.id)
 
-    if sub and sub["is_active"]:
+    if sub:
         exp = sub["expires_at"].strftime("%d.%m.%Y")
-        plan = sub.get("plan", "")
-        trial_note = " (пробный)" if sub.get("is_trial") else ""
+        trial_note = " (пробный)" if sub.get("type") == "trial" else ""
         text = (
             f"✅ <b>Подписка активна{trial_note}</b>\n\n"
-            f"Тариф: {plan}\n"
-            f"Действует до: <b>{exp}</b> ({sub['days_left']} дн.)\n\n"
+            f"Действует до: <b>{exp}</b>\n\n"
             "Для продления используйте кнопку ниже."
         )
     else:
@@ -1156,14 +1151,12 @@ async def cmd_subscribe(msg: Message) -> None:
             "Выберите способ оплаты:"
         )
 
-    buttons = []
-    if yukassa_btn:
-        buttons.append([InlineKeyboardButton(text="💳 Оплатить картой / СБП", callback_data="pay_yukassa")])
+    buttons = [[InlineKeyboardButton(text="💳 Оплатить рублями · карта / СБП", callback_data="pay_yukassa")]]
     buttons.append([InlineKeyboardButton(text="⭐ Оплатить Telegram Stars", callback_data="pay_stars")])
     if not sub:
         buttons.append([InlineKeyboardButton(
-            text=f"🎁 Пробный период ({TRIAL_DAYS} дней)",
-            callback_data="trial_yukassa" if yukassa_btn else "trial",
+            text="🎁 Пробный период (24 часа)",
+            callback_data="trial",
         )])
     buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="main_menu")])
 

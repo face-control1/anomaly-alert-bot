@@ -51,18 +51,10 @@ def settings_kb(settings: dict) -> InlineKeyboardMarkup:
 def buy_menu_kb() -> InlineKeyboardMarkup:
     from database.db import get_subscription_price
     price = get_subscription_price()["stars"]
-    try:
-        from bot.payments_yukassa import YUKASSA_AVAILABLE
-        show_yukassa = YUKASSA_AVAILABLE
-    except ImportError:
-        show_yukassa = False
-
-    buttons = []
-    if show_yukassa:
-        buttons.append([InlineKeyboardButton(
-            text="💳 Оплатить картой / СБП (ЮKassa)",
-            callback_data="pay_yukassa",
-        )])
+    buttons = [[InlineKeyboardButton(
+        text="💳 Оплатить рублями · карта / СБП",
+        callback_data="pay_yukassa",
+    )]]
     buttons.extend([
         [InlineKeyboardButton(
             text=f"⭐ 1 месяц · {price} Stars",
