@@ -18,6 +18,7 @@ from typing import Optional
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from database.db import get_ruble_plans
 
 logger = logging.getLogger(__name__)
 
@@ -28,29 +29,7 @@ WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "")
 
 YUKASSA_AVAILABLE = bool(YUKASSA_SHOP_ID and YUKASSA_SECRET)
 
-# Тарифы: (label, price_rub, days)
-PLANS = {
-    "month": {
-        "label": "1 месяц",
-        "price": 299,
-        "days": 30,
-        "description": "Подписка на 1 месяц",
-    },
-    "quarter": {
-        "label": "3 месяца",
-        "price": 799,
-        "days": 90,
-        "description": "Подписка на 3 месяца",
-    },
-    "year": {
-        "label": "1 год",
-        "price": 2490,
-        "days": 365,
-        "description": "Подписка на 1 год",
-    },
-}
-
-TRIAL_DAYS = 7
+TRIAL_DAYS = 1
 
 # --- DB helpers (SQLAlchemy / SQLite) ---
 try:
@@ -111,7 +90,9 @@ async def create_payment(user_id: int, plan_key: str, return_url: str) -> Option
         logger.error("ЮKassa не настроена (YUKASSA_SHOP_ID/YUKASSA_SECRET не заданы)")
         return None
 
-    plan = PLANS.get(plan_key)
+    plan = next((item for item in get_ruble_plans() if item["key"] == plan_key), None)
+    if plan:
+        plan = {**plan, "description": f"Подписка {plan['label']}"}
     if not plan:
         return None
 
@@ -171,7 +152,7 @@ def confirm_payment(payment_id: str, raw_event: dict) -> Optional[int]:
         return None
 
     user_id = int(user_id_str)
-    plan = PLANS.get(plan_key)
+    plan = next((item for item in get_ruble_plans() if item["key"] == plan_key), None)
     if not plan:
         return None
 
@@ -275,7 +256,7 @@ def setup_expiry_reminders(scheduler: AsyncIOScheduler, bot: Bot):
             for sub in subs:
                 days_left = (sub.expires_at - now).days
                 if days_left in reminders:
-                    plan_info = PLANS.get(sub.plan, {})
+                    plan_info = next((item for item in get_ruble_plans() if item["key"] == sub.plan), {})
                     plan_label = plan_info.get("label", sub.plan)
                     try:
                         await bot.send_message(

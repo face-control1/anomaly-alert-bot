@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+import re
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
@@ -29,6 +30,7 @@ from database.db import (
     get_recent_payments,
     get_recent_alerts,
     get_runtime_config,
+    set_ruble_plans,
     get_signal_performance,
     get_stats,
     grant_trial,
@@ -104,7 +106,7 @@ def _allowed(role: str, path: str, method: str) -> bool:
         return True
     if path.startswith("/api/admin/staff"):
         return False
-    if path in {"/api/admin/config", "/api/admin/promo", "/api/admin/promo/disable", "/api/admin/broadcast"}:
+    if path in {"/api/admin/config", "/api/admin/plans", "/api/admin/promo", "/api/admin/promo/disable", "/api/admin/broadcast"}:
         return role == "admin"
     if path in {"/api/admin/trial", "/api/admin/subscription", "/api/admin/deactivate", "/api/admin/message"}:
         return role in {"admin", "support"}
@@ -148,6 +150,7 @@ def handle_admin_request(handler) -> bool:
             config = get_runtime_config()
             _send(handler, 200, {
                 "subscription_price_stars": config["subscription_price_stars"],
+                "ruble_plans": config["ruble_plans"],
                 "trial_hours": 24,
             })
         return True
@@ -252,7 +255,7 @@ def handle_admin_request(handler) -> bool:
             _send(handler, 200, {"ok": True})
         elif handler.command == "POST" and parsed.path == "/api/admin/config":
             data = _read_json(handler)
-            allowed = set(get_runtime_config())
+            allowed = set(get_runtime_config()) - {"ruble_plans"}
             ranges = {
                 "subscription_price_stars": (1, 100000),
                 "volume_multiplier": (1, 100),
@@ -267,6 +270,24 @@ def handle_admin_request(handler) -> bool:
                     raise ValueError(f"Out of range: {key}")
                 set_app_config(key, str(value).lower() if isinstance(value, bool) else str(value))
             log_admin_action(admin_id, "update_config", json.dumps(data, ensure_ascii=False))
+            _send(handler, 200, {"ok": True, "config": get_runtime_config()})
+        elif handler.command == "POST" and parsed.path == "/api/admin/plans":
+            rows = _read_json(handler).get("items", [])
+            if not isinstance(rows, list) or not 1 <= len(rows) <= 12:
+                raise ValueError("Plans count")
+            plans, keys = [], set()
+            for row in rows:
+                key = str(row.get("key", "")).strip().lower()
+                label = str(row.get("label", "")).strip()
+                price, days = int(row.get("price", 0)), int(row.get("days", 0))
+                if not re.fullmatch(r"[a-z0-9_-]{1,24}", key) or key in keys:
+                    raise ValueError("Invalid plan key")
+                if not 1 <= len(label) <= 40 or not 1 <= price <= 1_000_000 or not 1 <= days <= 3650:
+                    raise ValueError("Invalid plan")
+                keys.add(key)
+                plans.append({"key": key, "label": label, "price": price, "days": days})
+            set_ruble_plans(plans)
+            log_admin_action(admin_id, "update_ruble_plans", json.dumps(plans, ensure_ascii=False))
             _send(handler, 200, {"ok": True, "config": get_runtime_config()})
         elif handler.command == "POST" and parsed.path == "/api/admin/promo":
             data = _read_json(handler)

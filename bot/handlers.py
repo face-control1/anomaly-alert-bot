@@ -54,6 +54,7 @@ from database.db import (
     register_referral,
     get_referral_count,
     get_promo_codes,
+    get_ruble_plans,
 )
 from bot.keyboards import (
     main_menu_kb,
@@ -1010,18 +1011,12 @@ async def cmd_id(msg: Message) -> None:
 
 def _yukassa_plans_kb() -> InlineKeyboardMarkup:
     """Клавиатура выбора тарифа ЮKassa."""
-    try:
-        from bot.ruble_plans import RUBLE_PLANS
-        buttons = []
-        for key, plan in RUBLE_PLANS.items():
-            buttons.append([InlineKeyboardButton(
-                text=f"💳 {plan['label']} — {plan['price']} ₽",
-                callback_data=f"yk_plan:{key}",
-            )])
-        buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="buy")])
-        return InlineKeyboardMarkup(inline_keyboard=buttons)
-    except ImportError:
-        return back_kb("buy")
+    buttons = [[InlineKeyboardButton(
+        text=f"💳 {plan['label']} — {plan['price']} ₽",
+        callback_data=f"yk_plan:{plan['key']}",
+    )] for plan in get_ruble_plans()]
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="buy")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 @router.callback_query(F.data == "pay_yukassa")
@@ -1050,12 +1045,12 @@ async def cb_yukassa_plan(cb: CallbackQuery) -> None:
     """Создаёт платёж ЮKassa для выбранного тарифа."""
     plan_key = cb.data.split(":", 1)[1]
     try:
-        from bot.payments_yukassa import PLANS, create_payment
+        from bot.payments_yukassa import create_payment
     except ImportError:
         await cb.answer("Оплата недоступна.", show_alert=True)
         return
 
-    plan = PLANS.get(plan_key)
+    plan = next((item for item in get_ruble_plans() if item["key"] == plan_key), None)
     if not plan:
         await cb.answer("Неизвестный тариф.", show_alert=True)
         return

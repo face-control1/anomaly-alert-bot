@@ -3,6 +3,7 @@ database/db.py ÃÂ¢ÃÂÃÂ ÃÂÃÂÃÂÃÂ½ÃÂ
 """
 
 import os
+import json
 import logging
 import shutil
 import hashlib
@@ -1111,6 +1112,7 @@ def remove_favorite(user_id: int, ticker: str, exchange: str = "MOEX") -> None:
 
 CONFIG_DEFAULTS = {
     "subscription_price_stars": "250",
+    "ruble_plans": '[{"key":"month","label":"1 месяц","price":299,"days":30},{"key":"quarter","label":"3 месяца","price":799,"days":90},{"key":"year","label":"1 год","price":2490,"days":365}]',
     "volume_multiplier": os.getenv("VOLUME_SPIKE_MULTIPLIER", "3.0"),
     "price_threshold_pct": os.getenv("PRICE_CHANGE_THRESHOLD_PCT", "3.0"),
     "bollinger_sigma": os.getenv("VOLATILITY_SIGMA", "2.5"),
@@ -1162,6 +1164,7 @@ def set_app_config(key: str, value: str) -> None:
 def get_runtime_config() -> dict:
     return {
         "subscription_price_stars": int(get_app_config("subscription_price_stars")),
+        "ruble_plans": get_ruble_plans(),
         "volume_multiplier": float(get_app_config("volume_multiplier")),
         "price_threshold_pct": float(get_app_config("price_threshold_pct")),
         "bollinger_sigma": float(get_app_config("bollinger_sigma")),
@@ -1170,6 +1173,23 @@ def get_runtime_config() -> dict:
         "evening_reports": get_app_config("evening_reports").lower() == "true",
         "alerts_enabled": get_app_config("alerts_enabled").lower() == "true",
     }
+
+
+def get_ruble_plans() -> list[dict]:
+    """Return centrally managed ruble plans used by the bot and public website."""
+    try:
+        rows = json.loads(get_app_config("ruble_plans"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        rows = json.loads(CONFIG_DEFAULTS["ruble_plans"])
+    return [
+        {"key": str(row["key"]), "label": str(row["label"]),
+         "price": int(row["price"]), "days": int(row["days"])}
+        for row in rows
+    ]
+
+
+def set_ruble_plans(plans: list[dict]) -> None:
+    set_app_config("ruble_plans", json.dumps(plans, ensure_ascii=False, separators=(",", ":")))
 
 
 def get_recent_payments(limit: int = 100) -> list[dict]:

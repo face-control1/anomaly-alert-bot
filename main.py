@@ -231,6 +231,17 @@ async def main() -> None:
         token=BOT_TOKEN,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    try:
+        await bot.set_my_description(
+            "MOEX HELP — радар аномалий Московской биржи.\n"
+            "Сайт: https://moexhelp.ru\n"
+            "Разработчик: https://astelon.ru"
+        )
+        await bot.set_my_short_description(
+            "Аномалии MOEX каждую минуту · moexhelp.ru · разработчик astelon.ru"
+        )
+    except Exception as exc:
+        logger.warning("Не удалось обновить описание Telegram-бота: %s", exc)
     keep_alive(bot, asyncio.get_running_loop())  # Render health + web admin API
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
